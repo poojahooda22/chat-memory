@@ -1,0 +1,21 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: chat-memory-db
+    environment:
+      POSTGRES_USER: chatmemory
+      POSTGRES_PASSWORD: chatmemory
+      POSTGRES_DB: chatmemory
+    # host port 5434: 5432/5433 are taken by other local projects
+    ports:
+      - "5434:5432"
+    volumes:
+      - chat_memory_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatmemory -d chatmemory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  chat_memory_pgdata:
