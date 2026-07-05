@@ -49,12 +49,12 @@ cp .env.example .env   # then fill in AI_GATEWAY_API_KEY
 # 4. create the database schema
 uv run alembic upgrade head
 
-# 5. start the API
-uv run uvicorn app.main:app --reload
+# 5. start the API (port 8000 by default; use another if it's taken)
+uv run uvicorn app.main:app --reload --port 8001
 ```
 
-Open http://localhost:8000/docs for the interactive API explorer,
-or http://localhost:8000/health for the heartbeat.
+Open http://localhost:8001/docs for the interactive API explorer,
+or http://localhost:8001/health for the heartbeat.
 
 Run the tests:
 

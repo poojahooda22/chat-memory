@@ -1,6 +1,12 @@
 # secrets — never committed
 .env
 
+# agent workspaces — local planning docs, never tracked
+.agents/
+.claude/
+.cursor/
+.gemini/
+
 # python
 __pycache__/
 *.py[cod]

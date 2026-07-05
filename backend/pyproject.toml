@@ -21,6 +21,10 @@ dev = [
     "ruff>=0.8",
 ]
 
+[tool.pyrefly]
+# point the IDE's type checker at the project venv, not the global Python
+python-interpreter-path = ".venv/Scripts/python.exe"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

@@ -20,6 +20,7 @@ class Episode(SQLModel, table=True):
     never rewritten; semantic memories are distilled from them and link back here.
     """
 
+    # pyrefly: ignore[bad-override]  — SQLModel types __tablename__ as a descriptor; plain-string assignment is its documented usage
     __tablename__ = "episodes"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -38,6 +39,7 @@ class Episode(SQLModel, table=True):
 class Memory(SQLModel, table=True):
     """A semantic fact distilled from one or more episodes, embedded for search."""
 
+    # pyrefly: ignore[bad-override]
     __tablename__ = "memories"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -58,6 +60,7 @@ class Memory(SQLModel, table=True):
 class MemoryHistory(SQLModel, table=True):
     """Audit trail: one row per ADD / UPDATE / DELETE applied to a memory."""
 
+    # pyrefly: ignore[bad-override]
     __tablename__ = "memory_history"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -71,6 +74,7 @@ class MemoryHistory(SQLModel, table=True):
 class ConversationSummary(SQLModel, table=True):
     """Rolling summary per conversation, consumed by the extraction step."""
 
+    # pyrefly: ignore[bad-override]
     __tablename__ = "conversation_summaries"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
