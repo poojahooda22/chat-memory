@@ -103,6 +103,15 @@ export async function retryUpload(jobId: string): Promise<void> {
   await http.post(`/uploads/${jobId}/retry`);
 }
 
+export async function renameUpload(jobId: string, filename: string): Promise<void> {
+  await http.patch(`/uploads/${jobId}`, { filename });
+}
+
+/** Forget this photo: file + episode + links removed; single-source memories forgotten. */
+export async function deleteUpload(jobId: string): Promise<void> {
+  await http.delete(`/uploads/${jobId}`);
+}
+
 export function uploadImageUrl(jobId: string): string {
   return `${BACKEND_URL}/uploads/${jobId}/image`;
 }

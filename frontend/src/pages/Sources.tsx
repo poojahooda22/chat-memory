@@ -1,10 +1,24 @@
 import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock3, ImagePlus, Loader2, PawPrint, RotateCcw, Tag, User, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock3,
+  ImagePlus,
+  Loader2,
+  PawPrint,
+  Pencil,
+  RotateCcw,
+  Tag,
+  Trash2,
+  User,
+  XCircle,
+} from "lucide-react";
 
 import {
+  deleteUpload,
   labelEntity,
   listUploads,
+  renameUpload,
   retryUpload,
   uploadImages,
   uploadImageUrl,
@@ -118,6 +132,27 @@ export function Sources() {
     mutationFn: retryUpload,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
   });
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => renameUpload(id, name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
+  });
+  const remove = useMutation({
+    mutationFn: deleteUpload,
+    onSuccess: () => {
+      // forgetting a photo can also forget single-source memories — refresh both
+      queryClient.invalidateQueries({ queryKey: ["uploads"] });
+      queryClient.invalidateQueries({ queryKey: ["memories"] });
+    },
+  });
+  const [renamingJob, setRenamingJob] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  function commitRename(id: string) {
+    const name = renameValue.trim();
+    if (name) rename.mutate({ id, name });
+    setRenamingJob(null);
+    setRenameValue("");
+  }
 
   const addFiles = useCallback(
     (list: FileList | null) => {
@@ -194,8 +229,32 @@ export function Sources() {
                   loading="lazy"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="truncate font-medium">{job.filename || job.kind}</span>
+                  <div className="group/name flex items-center gap-2 text-sm">
+                    {renamingJob === job.id ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); commitRename(job.id); }
+                          else if (e.key === "Escape") { e.preventDefault(); setRenamingJob(null); }
+                        }}
+                        onBlur={() => commitRename(job.id)}
+                        className="border-ring/60 bg-background w-56 rounded-md border px-2 py-0.5 text-sm focus:outline-none"
+                      />
+                    ) : (
+                      <>
+                        <span className="truncate font-medium">{job.filename || job.kind}</span>
+                        <button
+                          onClick={() => { setRenamingJob(job.id); setRenameValue(job.filename); }}
+                          title="Rename"
+                          className="text-muted-foreground hover:text-foreground opacity-0 transition-opacity group-hover/name:opacity-100"
+                        >
+                          <Pencil className="size-3" />
+                        </button>
+                      </>
+                    )}
                     <span className="text-muted-foreground shrink-0 text-[11px] uppercase">
                       {job.kind}
                     </span>
@@ -226,6 +285,13 @@ export function Sources() {
                       <RotateCcw className="size-3.5" />
                     </button>
                   )}
+                  <button
+                    onClick={() => remove.mutate(job.id)}
+                    title="Forget this photo (removes its episode; memories it alone supported are forgotten)"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded-md p-1 transition-colors"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
                 </div>
               </div>
             );

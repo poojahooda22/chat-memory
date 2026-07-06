@@ -28,6 +28,7 @@ from sqlmodel import Session, col, select
 from app.config import get_settings
 from app.db import get_session
 from app.ingest.exif import classify_kind, parse_exif
+from app.ingest.forget import forget_job
 from app.ingest.pipeline import run_ingest_job
 from app.models import Entity, Episode, EpisodeEntity, IngestJob
 
@@ -188,6 +189,37 @@ def upload_image_file(job_id: uuid.UUID, session: Session = Depends(get_session)
     if job is None or not job.image_path or not Path(job.image_path).is_file():
         raise HTTPException(404, "Image not found")
     return FileResponse(job.image_path, media_type=job.content_type)
+
+
+class RenameRequest(BaseModel):
+    filename: str
+
+
+@router.patch("/uploads/{job_id}", operation_id="rename_upload", response_model=IngestJobRead)
+def rename_upload(
+    job_id: uuid.UUID, req: RenameRequest, session: Session = Depends(get_session)
+) -> IngestJobRead:
+    """Give the upload a human name — Drive/Photos downloads arrive as IMG20230522… noise."""
+    job = session.get(IngestJob, job_id)
+    if job is None:
+        raise HTTPException(404, "Upload not found")
+    name = req.filename.strip()
+    if not name:
+        raise HTTPException(422, "filename must not be empty")
+    job.filename = name[:200]
+    session.add(job)
+    session.commit()
+    return _job_out(job, caption=None)
+
+
+@router.delete("/uploads/{job_id}", operation_id="delete_upload")
+def delete_upload(job_id: uuid.UUID, session: Session = Depends(get_session)) -> dict[str, str]:
+    """Forget this photo: file + episode + links go; memories lose this receipt (or are
+    forgotten when it was their only source). Entities survive."""
+    if not forget_job(session, job_id=job_id):
+        raise HTTPException(404, "Upload not found")
+    session.commit()
+    return {"status": "deleted", "job_id": str(job_id)}
 
 
 @router.post(
