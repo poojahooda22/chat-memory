@@ -58,6 +58,7 @@ class IngestJobRead(BaseModel):
     filename: str
     captured_at: str | None
     time_source: str | None
+    place: str | None = None  # geocoded place name, when the photo carried GPS
     episode_id: uuid.UUID | None
     caption: str | None
     entities: list[EntityChip] = []
@@ -66,7 +67,10 @@ class IngestJobRead(BaseModel):
 
 
 def _job_out(
-    job: IngestJob, caption: str | None, entities: list[EntityChip] | None = None
+    job: IngestJob,
+    caption: str | None,
+    entities: list[EntityChip] | None = None,
+    place: str | None = None,
 ) -> IngestJobRead:
     return IngestJobRead(
         id=job.id,
@@ -75,6 +79,7 @@ def _job_out(
         filename=job.filename,
         captured_at=(job.exif or {}).get("captured_at"),
         time_source=(job.exif or {}).get("time_source"),
+        place=place,
         episode_id=job.episode_id,
         caption=caption,
         entities=entities or [],
@@ -204,11 +209,13 @@ def list_uploads(
     out: list[IngestJobRead] = []
     for j in jobs:
         episode = episodes.get(j.episode_id) if j.episode_id else None
+        place = ((episode.context or {}).get("place") or {}).get("name") if episode else None
         out.append(
             _job_out(
                 j,
                 caption=episode.content if episode else None,
                 entities=_chips(episode) if episode else [],
+                place=place,
             )
         )
     return out

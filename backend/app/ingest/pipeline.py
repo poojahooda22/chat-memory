@@ -8,12 +8,14 @@ episode_id on the job is the idempotency guard: a job that already produced an e
 never insert a second one.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlmodel import Session, col, select
 
 from app.config import Settings
+from app.ingest.geocode import make_geocoder
 from app.ingest.vision import annotate_image, compare_subjects
 from app.memory.embeddings import embed_text
 from app.memory.entities import apply_label, suggest_entity
@@ -28,7 +30,7 @@ def run_ingest_job(engine, client, settings: Settings, job_id) -> None:
     """Background entry point — own session, own commit; failures land on the job row."""
     with Session(engine) as session:
         try:
-            process_job(session, client, settings, job_id=job_id)
+            process_job(session, client, settings, job_id=job_id, geocode=make_geocoder(settings))
             session.commit()
         except Exception as exc:
             session.rollback()
@@ -77,7 +79,14 @@ def _confidence(item: dict) -> float:
         return 0.0
 
 
-def process_job(session: Session, client, settings: Settings, *, job_id) -> IngestJob | None:
+def process_job(
+    session: Session,
+    client,
+    settings: Settings,
+    *,
+    job_id,
+    geocode: Callable[[float, float], str | None] | None = None,
+) -> IngestJob | None:
     job = session.get(IngestJob, job_id)
     # status guard: only a queued job runs; done/failed need an explicit retry
     if job is None or job.status != "queued":
@@ -108,6 +117,11 @@ def process_job(session: Session, client, settings: Settings, *, job_id) -> Inge
     if exif.get("captured_at"):
         occurred_at = datetime.fromisoformat(exif["captured_at"])
 
+    # the "where": resolve GPS to a place name (worker-only fetch); None when there's no GPS
+    # or the lookup fails — never a fabricated place
+    lat, lon = exif.get("latitude"), exif.get("longitude")
+    place_name = geocode(lat, lon) if (geocode and lat is not None and lon is not None) else None
+
     episode = Episode(
         user_id=job.user_id,
         conversation_id=None,
@@ -121,8 +135,9 @@ def process_job(session: Session, client, settings: Settings, *, job_id) -> Inge
             "activity": str(annotation.get("activity") or ""),
             "emotion": str(annotation.get("emotion") or ""),
             "place": {
-                "latitude": exif.get("latitude"),
-                "longitude": exif.get("longitude"),
+                "latitude": lat,
+                "longitude": lon,
+                "name": place_name,  # geocoded from GPS, or None
                 "guess": annotation.get("place_guess"),
             },
             "exif": exif,

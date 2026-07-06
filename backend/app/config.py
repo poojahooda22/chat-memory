@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     # where uploaded originals live (gitignored); R2/object storage is the later fork
     uploads_dir: str = "uploads"
 
+    # reverse-geocoding (lat/lon -> place name) runs in the WORKER only, on photos that carry
+    # GPS. Nominatim is fine for dev/low volume (single cached lookups); production bulk needs a
+    # self-hosted instance or a paid geocoder — its usage policy forbids systematic querying.
+    geocode_enabled: bool = True
+    geocode_url: str = "https://nominatim.openstreetmap.org/reverse"
+    geocode_zoom: int = 12  # ~town/suburb granularity
+    geocode_user_agent: str = "chat-memory/0.1 (personal memory app)"
+
     # CORS: which frontend origins may call this API. "*" is fine while there's no auth/cookies;
     # restrict to the deployed frontend URL before going public.
     cors_origins: list[str] = ["*"]

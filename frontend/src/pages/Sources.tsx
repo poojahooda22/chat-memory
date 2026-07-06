@@ -5,6 +5,7 @@ import {
   Clock3,
   ImagePlus,
   Loader2,
+  MapPin,
   PawPrint,
   Pencil,
   RotateCcw,
@@ -306,10 +307,17 @@ export function Sources() {
                       {job.kind}
                     </span>
                   </div>
-                  <div className="text-muted-foreground mt-0.5 text-xs">
-                    {job.captured_at && job.time_source === "exif"
-                      ? `captured ${new Date(job.captured_at).toLocaleString()}`
-                      : `uploaded ${new Date(job.created_at).toLocaleString()}`}
+                  <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 text-xs">
+                    <span>
+                      {job.captured_at && job.time_source === "exif"
+                        ? `captured ${new Date(job.captured_at).toLocaleString()}`
+                        : `uploaded ${new Date(job.created_at).toLocaleString()}`}
+                    </span>
+                    {job.place && (
+                      <span className="inline-flex items-center gap-0.5">
+                        <MapPin className="size-3" /> {job.place}
+                      </span>
+                    )}
                   </div>
                   {job.status === "done" && job.caption && (
                     <p className="mt-1.5 line-clamp-2 text-xs">{job.caption}</p>

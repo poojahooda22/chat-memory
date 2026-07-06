@@ -81,6 +81,7 @@ export interface IngestJob {
   filename: string;
   captured_at: string | null;
   time_source: string | null;
+  place: string | null; // geocoded place name, when the photo carried GPS
   episode_id: string | null;
   caption: string | null;
   entities: EntityChip[];

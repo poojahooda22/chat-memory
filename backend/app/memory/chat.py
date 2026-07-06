@@ -32,6 +32,13 @@ class ChatResult:
     operations: list[MemoryOperation]
 
 
+def _photo_line(episode: Episode) -> str:
+    """A photo memory for the prompt: capture date + place (when known) + its caption."""
+    place = ((episode.context or {}).get("place") or {}).get("name")
+    where = f", in {place}" if place else ""
+    return f"[captured {episode.occurred_at.date().isoformat()}{where}] {episode.content}"
+
+
 def _recent_turns(session: Session, *, user_id, conversation_id) -> list[dict]:
     """The last few messages of this conversation, chronological, as chat turns."""
     if conversation_id is None:
@@ -64,9 +71,7 @@ def answer(
     photo_episodes = search_image_episodes(
         session, client, settings, user_id=user_id, query=message, limit=PHOTO_TOP_K
     )
-    photo_texts = [
-        f"[captured {e.occurred_at.date().isoformat()}] {e.content}" for e in photo_episodes
-    ]
+    photo_texts = [_photo_line(e) for e in photo_episodes]
 
     # 2. AUGMENT — inject memories + photo memories + recent turns + the new message
     history = _recent_turns(session, user_id=user_id, conversation_id=conversation_id)

@@ -120,6 +120,30 @@ def test_process_job_creates_episode_once_and_distils(db_session, tmp_path):
     assert memories[0].source_episode_ids == [str(episode.id)]
 
 
+def test_process_job_geocodes_when_gps_present(db_session, tmp_path):
+    job = _make_job(db_session, tmp_path, _jpeg_with_exif())  # this JPEG carries GPS
+    llm = FakeLLM([ANNOTATION, EXTRACTION, DECISION])
+    processed = process_job(
+        db_session, llm, get_settings(),
+        job_id=job.id, geocode=lambda lat, lon: "Jaipur, India",
+    )
+    assert processed is not None
+    episode = db_session.get(Episode, processed.episode_id)
+    assert episode is not None
+    assert episode.context["place"]["name"] == "Jaipur, India"
+    assert episode.context["place"]["latitude"] == pytest.approx(28.6, abs=1e-6)
+
+
+def test_process_job_no_place_without_geocoder(db_session, tmp_path):
+    job = _make_job(db_session, tmp_path, _jpeg_with_exif())
+    llm = FakeLLM([ANNOTATION, EXTRACTION, DECISION])
+    processed = process_job(db_session, llm, get_settings(), job_id=job.id)  # no geocode passed
+    assert processed is not None
+    episode = db_session.get(Episode, processed.episode_id)
+    assert episode is not None
+    assert episode.context["place"]["name"] is None  # GPS kept, but no place invented
+
+
 def test_process_job_is_idempotent(db_session, tmp_path):
     job = _make_job(db_session, tmp_path, _jpeg_with_exif())
     llm = FakeLLM([ANNOTATION, EXTRACTION, DECISION])
