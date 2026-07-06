@@ -37,12 +37,9 @@ export function Home() {
   const mutation = useMutation({
     mutationFn: (message: string) => sendChat(message, active.id),
     onSuccess: (res: ChatResponse) => {
-      appendTurn(active.id, {
-        role: "assistant",
-        content: res.reply,
-        // photo-derived recalls carry a camera marker so their origin is visible
-        memoriesUsed: [...res.memories_used, ...res.photos_used.map((p) => `📷 ${p}`)],
-      });
+      // recall stays server-side (memories_used/photos_used in the response) — the chat UI
+      // stays clean; the Memory page is where the receipts live
+      appendTurn(active.id, { role: "assistant", content: res.reply });
       queryClient.invalidateQueries({ queryKey: ["memories"] });
       scrollToBottom();
     },
@@ -184,11 +181,6 @@ export function Home() {
               <div className="break-words [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:underline [&_code]:font-mono [&_code]:text-[12.5px] [&_code]:break-words [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background/60 [&_pre]:p-3 [&_pre_code]:break-normal">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.content}</ReactMarkdown>
               </div>
-              {turn.memoriesUsed && turn.memoriesUsed.length > 0 && (
-                <div className="border-border/60 text-muted-foreground mt-2 border-t pt-1.5 text-[11px]">
-                  recalled: {turn.memoriesUsed.join(" · ")}
-                </div>
-              )}
             </div>
           </div>
         ))}
