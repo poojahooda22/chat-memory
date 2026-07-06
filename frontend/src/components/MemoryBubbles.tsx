@@ -15,9 +15,14 @@ export function MemoryBubbles() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b px-5 py-3">
-        <h2 className="text-sm font-semibold">what I remember about you</h2>
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
+      <div className="flex items-center justify-between px-5 py-4">
+        <div>
+          <h2 className="text-lg font-semibold">Memory</h2>
+          <p className="text-muted-foreground text-sm">
+            what the assistant remembers about you — click any to see its receipts
+          </p>
+        </div>
         <span className="text-muted-foreground text-xs">{memories.length} memories</span>
       </div>
 
@@ -25,7 +30,7 @@ export function MemoryBubbles() {
         {isLoading && <div className="text-muted-foreground text-sm">loading…</div>}
         {!isLoading && memories.length === 0 && (
           <div className="text-muted-foreground mt-16 text-center text-sm">
-            No memories yet. Chat on the left and watch them appear here.
+            No memories yet. Chat with the assistant and they&apos;ll appear here.
           </div>
         )}
 
