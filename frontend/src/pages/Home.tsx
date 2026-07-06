@@ -101,9 +101,9 @@ export function Home() {
     );
   }
 
-  // ── Conversation view ──
+  // ── Conversation view: the list scrolls, the composer stays pinned at the bottom ──
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
+    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-6">
         {active.turns.map((turn, i) => (
           <div key={i} className={cn("flex", turn.role === "user" ? "justify-end" : "justify-start")}>
@@ -129,7 +129,7 @@ export function Home() {
         ))}
         {mutation.isPending && <div className="text-muted-foreground text-xs">thinking…</div>}
       </div>
-      <div className="px-4 pb-4">{composer}</div>
+      <div className="shrink-0 px-4 pb-4">{composer}</div>
     </div>
   );
 }
