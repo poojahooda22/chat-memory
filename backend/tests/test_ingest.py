@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.ingest.exif import classify_kind, parse_exif
 from app.ingest.pipeline import process_job
 from app.models import Episode, IngestJob, Memory
-from tests.conftest import FakeLLM
+from tests.conftest import FakeLLM, fake_embedding
 
 CAPTURE = "2022:07:15 18:30:00"
 
@@ -132,6 +132,109 @@ def test_process_job_is_idempotent(db_session, tmp_path):
     assert again is not None and again.status == "done"
     episodes = list(db_session.exec(select(Episode).where(Episode.user_id == "test-user")).all())
     assert len(episodes) == 1
+
+
+# the auto-label tests need a pet description that lands in the same fake-embedding slot as
+# the seeded "Monty: a small fluffy dog" (keyword "dog"), so candidate matching fires
+AUTO_ANNOTATION = json.dumps({
+    "caption": "A small fluffy dog nestled in a red blanket.",
+    "kind": "photo",
+    "people": [],
+    "pets": [{"description": "a small fluffy dog", "species": "dog", "confidence": 0.9}],
+    "objects": ["red blanket"],
+    "environment": "indoors",
+    "activity": "resting",
+    "emotion": "calm",
+    "ocr_text": "",
+    "place_guess": None,
+})
+VERDICT_SAME = json.dumps(
+    {"same_subject": True, "confidence": 0.92, "evidence": "same coat and face structure"}
+)
+VERDICT_UNSURE = json.dumps(
+    {"same_subject": True, "confidence": 0.45, "evidence": "similar but partially occluded"}
+)
+LABEL_DECISION = json.dumps({"event": "NOOP", "target_index": None, "text": ""})
+
+
+def _seed_known_pet(db_session, tmp_path, user_id: str):
+    """Monty already exists: a labeled entity + one USER-confirmed reference photo."""
+    from datetime import UTC, datetime
+
+    from app.models import Entity, EpisodeEntity
+
+    ref_episode = Episode(
+        user_id=user_id,
+        occurred_at=datetime(2023, 5, 22, tzinfo=UTC),
+        content="A small, fluffy dog on a blanket.",
+        context={"source": "image", "kind": "photo",
+                 "entities": [{"type": "pet", "description": "a small fluffy dog", "label": None}]},
+        embedding=fake_embedding("a small fluffy dog photo"),
+    )
+    db_session.add(ref_episode)
+    db_session.flush()
+    ref_path = tmp_path / "ref.jpg"
+    ref_path.write_bytes(_jpeg_with_exif())
+    ref_job = IngestJob(
+        user_id=user_id, kind="photo", status="done", filename="ref.jpg",
+        content_type="image/jpeg", image_path=str(ref_path), exif={},
+        episode_id=ref_episode.id,
+    )
+    monty = Entity(
+        user_id=user_id, name="Monty", type="pet", description="a small fluffy dog",
+        embedding=fake_embedding("Monty: a small fluffy dog"),
+    )
+    db_session.add(ref_job)
+    db_session.add(monty)
+    db_session.flush()
+    db_session.add(EpisodeEntity(
+        episode_id=ref_episode.id, entity_id=monty.id, entity_index=0, labeled_by="user"
+    ))
+    db_session.flush()
+    return monty
+
+
+def test_auto_label_recognizes_known_pet(db_session, tmp_path):
+    """A new photo of a known pet gets its label applied BY THE MEMORY (visual verify)."""
+    from app.models import EpisodeEntity
+
+    user = "test-auto-user"
+    monty = _seed_known_pet(db_session, tmp_path, user)
+    job = _make_job(db_session, tmp_path, _jpeg_with_exif())
+    job.user_id = user
+    db_session.add(job)
+    db_session.flush()
+
+    # annotation -> extraction(empty) -> visual verdict -> label fact decision
+    llm = FakeLLM([AUTO_ANNOTATION, json.dumps({"facts": []}), VERDICT_SAME, LABEL_DECISION])
+    processed = process_job(db_session, llm, get_settings(), job_id=job.id)
+
+    assert processed is not None and processed.status == "done"
+    links = list(db_session.exec(
+        select(EpisodeEntity).where(EpisodeEntity.episode_id == processed.episode_id)).all())
+    assert len(links) == 1
+    assert links[0].entity_id == monty.id
+    assert links[0].labeled_by == "memory"  # the memory labeled it, visibly
+
+
+def test_auto_label_declines_below_confidence(db_session, tmp_path):
+    """An unsure visual verdict falls back to propose-only — no link is written."""
+    from app.models import EpisodeEntity
+
+    user = "test-auto-unsure"
+    _seed_known_pet(db_session, tmp_path, user)
+    job = _make_job(db_session, tmp_path, _jpeg_with_exif())
+    job.user_id = user
+    db_session.add(job)
+    db_session.flush()
+
+    llm = FakeLLM([AUTO_ANNOTATION, json.dumps({"facts": []}), VERDICT_UNSURE])
+    processed = process_job(db_session, llm, get_settings(), job_id=job.id)
+
+    assert processed is not None and processed.status == "done"
+    links = list(db_session.exec(
+        select(EpisodeEntity).where(EpisodeEntity.episode_id == processed.episode_id)).all())
+    assert links == []
 
 
 def test_process_job_raises_on_garbage_annotation(db_session, tmp_path):

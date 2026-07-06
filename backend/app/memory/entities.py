@@ -88,6 +88,7 @@ def apply_label(
     episode_id: uuid.UUID,
     entity_index: int,
     name: str,
+    labeled_by: str = "user",
 ) -> LabelResult:
     episode = session.get(Episode, episode_id)
     if episode is None:
@@ -133,7 +134,10 @@ def apply_label(
     ).first()
     if link is None:
         session.add(
-            EpisodeEntity(episode_id=episode.id, entity_id=entity.id, entity_index=entity_index)
+            EpisodeEntity(
+                episode_id=episode.id, entity_id=entity.id,
+                entity_index=entity_index, labeled_by=labeled_by,
+            )
         )
 
     # the label IS a fact — through the decision phase so repeats dedupe, with provenance

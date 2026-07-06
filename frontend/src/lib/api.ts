@@ -68,6 +68,8 @@ export interface EntityChip {
   description: string;
   confidence: number | null;
   label: string | null;
+  /** who labeled it: "user" (you) or "memory" (visual recognition) */
+  labeled_by: "user" | "memory" | null;
   /** recognition: looks like an entity you already named — confirm to apply */
   suggested_name: string | null;
 }
@@ -122,6 +124,11 @@ export interface LabelResponse {
   entity: { id: string; name: string; type: string; description: string };
   memory_event: string;
   reused_existing: boolean;
+}
+
+/** Detach a label from a photo — the undo for a wrong auto-recognition. */
+export async function unlabelEntity(episodeId: string, entityIndex: number): Promise<void> {
+  await http.delete(`/episodes/${episodeId}/label/${entityIndex}`);
 }
 
 /** Name a detected entity on a photo episode: "this is Monty". */

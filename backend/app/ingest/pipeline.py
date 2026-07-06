@@ -11,13 +11,17 @@ never insert a second one.
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.config import Settings
-from app.ingest.vision import annotate_image
+from app.ingest.vision import annotate_image, compare_subjects
 from app.memory.embeddings import embed_text
+from app.memory.entities import apply_label, suggest_entity
 from app.memory.pipeline import distil_text
-from app.models import Episode, IngestJob
+from app.models import Episode, EpisodeEntity, IngestJob
+
+# visual recognition must be at least this sure before the memory labels a pet by itself
+AUTO_LABEL_MIN_CONFIDENCE = 0.8
 
 
 def run_ingest_job(engine, client, settings: Settings, job_id) -> None:
@@ -141,8 +145,72 @@ def process_job(session: Session, client, settings: Settings, *, job_id) -> Inge
         source_ids=[str(episode.id)],
     )
 
+    # visual recognition: pets the memory already knows get their label applied by the
+    # memory itself — the user taught the name once (single-shot); recognition is the
+    # system's job from then on. People stay propose-only by design.
+    try:
+        _auto_label_pets(session, client, settings, job=job, episode=episode, image_bytes=image_bytes)
+    except Exception as exc:  # recognition is an enhancement — its failure never fails ingest
+        job.error = f"auto-label skipped: {type(exc).__name__}: {exc}"[:500]
+
     job.status = "done"
-    job.error = None
     job.updated_at = datetime.now(UTC)
     session.add(job)
     return job
+
+
+def _auto_label_pets(
+    session: Session, client, settings: Settings, *, job: IngestJob, episode: Episode, image_bytes: bytes
+) -> None:
+    for index, chip in enumerate((episode.context or {}).get("entities") or []):
+        if chip.get("type") != "pet":
+            continue
+        candidate = suggest_entity(
+            session, client, settings,
+            user_id=job.user_id, entity_type="pet", description=chip.get("description", ""),
+        )
+        if candidate is None:
+            continue
+        entity, _distance = candidate
+        reference = _reference_image(session, entity_id=entity.id, exclude_episode_id=episode.id)
+        if reference is None:
+            continue
+        ref_bytes, ref_type = reference
+        verdict = compare_subjects(
+            client, settings.vision_model,
+            reference_bytes=ref_bytes, reference_type=ref_type,
+            candidate_bytes=image_bytes, candidate_type=job.content_type,
+        )
+        confidence = _confidence(verdict)
+        if bool(verdict.get("same_subject")) and confidence >= AUTO_LABEL_MIN_CONFIDENCE:
+            apply_label(
+                session, client, settings,
+                episode_id=episode.id, entity_index=index,
+                name=entity.name, labeled_by="memory",
+            )
+
+
+def _reference_image(
+    session: Session, *, entity_id, exclude_episode_id
+) -> tuple[bytes, str] | None:
+    """The most recent USER-confirmed photo of this entity that still has its file.
+
+    Auto-labeled photos are deliberately never references — recognition always anchors on
+    something the user personally confirmed, so a wrong auto-label cannot compound.
+    """
+    links = session.exec(
+        select(EpisodeEntity)
+        .where(
+            EpisodeEntity.entity_id == entity_id,
+            EpisodeEntity.episode_id != exclude_episode_id,
+            EpisodeEntity.labeled_by == "user",
+        )
+        .order_by(col(EpisodeEntity.created_at).desc())
+    ).all()
+    for link in links:
+        ref_job = session.exec(
+            select(IngestJob).where(IngestJob.episode_id == link.episode_id)
+        ).first()
+        if ref_job and ref_job.image_path and Path(ref_job.image_path).is_file():
+            return Path(ref_job.image_path).read_bytes(), ref_job.content_type
+    return None

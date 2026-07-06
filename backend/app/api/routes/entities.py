@@ -11,7 +11,7 @@ from sqlmodel import Session, col, select
 from app.config import get_settings
 from app.db import get_session
 from app.memory.entities import LabelError, apply_label
-from app.models import Entity
+from app.models import Entity, EpisodeEntity
 
 router = APIRouter(tags=["entities"])
 
@@ -64,6 +64,27 @@ def label_entity(
         memory_event=result.memory_event,
         reused_existing=result.reused_existing,
     )
+
+
+@router.delete(
+    "/episodes/{episode_id}/label/{entity_index}", operation_id="unlabel_entity"
+)
+def unlabel_entity(
+    episode_id: uuid.UUID, entity_index: int, session: Session = Depends(get_session)
+) -> dict[str, str]:
+    """Detach a label from this photo (the undo for a wrong auto-recognition). The entity
+    and any semantic memories stay — only the photo link is removed."""
+    link = session.exec(
+        select(EpisodeEntity).where(
+            EpisodeEntity.episode_id == episode_id,
+            EpisodeEntity.entity_index == entity_index,
+        )
+    ).first()
+    if link is None:
+        raise HTTPException(404, "No label on that slot")
+    session.delete(link)
+    session.commit()
+    return {"status": "unlabeled"}
 
 
 @router.get("/entities", operation_id="list_entities", response_model=list[EntityRead])

@@ -46,6 +46,7 @@ class EntityChip(BaseModel):
     description: str
     confidence: float | None = None
     label: str | None = None
+    labeled_by: str | None = None  # "user" | "memory" (visual recognition)
     # recognition: "looks like an entity you already named" — a proposal the user confirms
     suggested_name: str | None = None
 
@@ -150,7 +151,7 @@ def list_uploads(
     # one query for the episodes of every finished job, one for their entity labels
     episode_ids = [j.episode_id for j in jobs if j.episode_id is not None]
     episodes: dict[uuid.UUID, Episode] = {}
-    labels: dict[uuid.UUID, dict[int, str]] = {}  # episode_id -> {entity_index: name}
+    labels: dict[uuid.UUID, dict[int, tuple[str, str]]] = {}  # episode -> {index: (name, by)}
     if episode_ids:
         for e in session.exec(select(Episode).where(col(Episode.id).in_(episode_ids))).all():
             episodes[e.id] = e
@@ -160,7 +161,10 @@ def list_uploads(
             .where(col(EpisodeEntity.episode_id).in_(episode_ids))
         ).all()
         for link, entity in rows:
-            labels.setdefault(link.episode_id, {})[link.entity_index] = entity.name
+            labels.setdefault(link.episode_id, {})[link.entity_index] = (
+                entity.name,
+                link.labeled_by,
+            )
 
     # recognition memo: identical descriptions across photos embed + match only once
     settings = get_settings()
@@ -172,9 +176,10 @@ def list_uploads(
         for i, d in enumerate((episode.context or {}).get("entities") or []):
             entity_type = d.get("type", "object")
             description = d.get("description", "")
+            pair = named.get(i)  # (name, labeled_by) | None
             suggested = None
             # only unlabeled people/pets get a recognition pass
-            if named.get(i) is None and entity_type in ("person", "pet"):
+            if pair is None and entity_type in ("person", "pet"):
                 key = (entity_type, description)
                 if key not in suggestion_cache:
                     match = suggest_entity(
@@ -189,7 +194,8 @@ def list_uploads(
                     type=entity_type,
                     description=description,
                     confidence=d.get("confidence"),
-                    label=named.get(i),
+                    label=pair[0] if pair else None,
+                    labeled_by=pair[1] if pair else None,
                     suggested_name=suggested,
                 )
             )

@@ -136,6 +136,8 @@ class EpisodeEntity(SQLModel, table=True):
     episode_id: uuid.UUID = Field(foreign_key="episodes.id", index=True)
     entity_id: uuid.UUID = Field(foreign_key="entities.id", index=True)
     entity_index: int = Field(default=0)  # which chip in the episode's context.entities
+    # who attached this label: "user" (confirmed by hand) or "memory" (visual recognition)
+    labeled_by: str = Field(default="user")
     created_at: datetime = Field(default_factory=_utcnow)
 
 

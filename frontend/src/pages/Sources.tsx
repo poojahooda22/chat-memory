@@ -20,6 +20,7 @@ import {
   listUploads,
   renameUpload,
   retryUpload,
+  unlabelEntity,
   uploadImages,
   uploadImageUrl,
   type EntityChip,
@@ -48,6 +49,10 @@ function EntityChips({ job }: { job: IngestJob }) {
       queryClient.invalidateQueries({ queryKey: ["uploads"] });
       queryClient.invalidateQueries({ queryKey: ["memories"] });
     },
+  });
+  const unlabel = useMutation({
+    mutationFn: (index: number) => unlabelEntity(job.episode_id!, index),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
   });
 
   const nameable = job.entities.filter((e) => e.type === "person" || e.type === "pet");
@@ -82,13 +87,26 @@ function EntityChips({ job }: { job: IngestJob }) {
           );
         }
         if (chip.label) {
+          const auto = chip.labeled_by === "memory";
           return (
             <span
               key={chip.index}
-              title={chip.description}
+              title={auto ? `Recognized by your memory: ${chip.description}` : chip.description}
               className="bg-secondary text-secondary-foreground inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
             >
               <Icon className="size-3" /> {chip.label}
+              {auto && (
+                <>
+                  <span className="text-muted-foreground text-[10px] font-normal">auto</span>
+                  <button
+                    onClick={() => unlabel.mutate(chip.index)}
+                    title={`Not ${chip.label}? Remove this label`}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <XCircle className="size-3" />
+                  </button>
+                </>
+              )}
             </span>
           );
         }
