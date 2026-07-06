@@ -109,13 +109,14 @@ export function Home() {
           <div key={i} className={cn("flex", turn.role === "user" ? "justify-end" : "justify-start")}>
             <div
               className={cn(
-                "max-w-[85%] rounded-xl px-4 py-2.5 text-sm",
+                "max-w-[85%] min-w-0 overflow-hidden rounded-xl px-4 py-2.5 text-sm",
                 turn.role === "user"
                   ? "bg-primary text-primary-foreground"
                   : "bg-secondary text-secondary-foreground",
               )}
             >
-              <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1">
+              {/* markdown body — long lines wrap, code blocks scroll inside the bubble */}
+              <div className="break-words [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:underline [&_code]:font-mono [&_code]:text-[12.5px] [&_code]:break-words [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background/60 [&_pre]:p-3 [&_pre_code]:break-normal">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.content}</ReactMarkdown>
               </div>
               {turn.memoriesUsed && turn.memoriesUsed.length > 0 && (
