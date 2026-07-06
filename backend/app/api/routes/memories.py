@@ -7,7 +7,7 @@ from sqlmodel import Session, col, select
 
 from app.config import get_settings
 from app.db import get_session
-from app.memory.pipeline import record_exchange, refresh_summary
+from app.memory.pipeline import record_exchange, run_summary_refresh
 from app.models import Memory, MemoryHistory
 
 router = APIRouter(tags=["memories"])
@@ -73,7 +73,7 @@ def record_memories(
     # refresh the rolling summary off the request path (fire-and-forget; a lost run is harmless)
     if req.conversation_id:
         background.add_task(
-            _refresh_summary_task,
+            run_summary_refresh,
             request.app.state.engine, request.app.state.llm, settings, req.conversation_id,
         )
 
@@ -84,12 +84,6 @@ def record_memories(
             for o in result.operations
         ],
     )
-
-
-def _refresh_summary_task(engine, llm, settings, conversation_id: str) -> None:
-    with Session(engine) as session:
-        refresh_summary(session, llm, settings, conversation_id)
-        session.commit()
 
 
 # ── read path ────────────────────────────────────────────────────────────────

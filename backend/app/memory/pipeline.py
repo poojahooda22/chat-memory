@@ -204,6 +204,17 @@ def search_memories(
     return _search_similar(session, user_id=user_id, embedding=embedding, limit=limit)
 
 
+def run_summary_refresh(engine, client, settings: Settings, conversation_id: str) -> None:
+    """Background entry point: refresh a conversation's summary in its own session.
+
+    Shared by the /memories and /chat routes — a lost run is harmless (the next exchange just
+    uses a slightly older summary), so it runs off the request path via BackgroundTasks.
+    """
+    with Session(engine) as session:
+        refresh_summary(session, client, settings, conversation_id)
+        session.commit()
+
+
 def refresh_summary(session: Session, client, settings: Settings, conversation_id: str) -> None:
     """Regenerate the rolling summary for a conversation (runs off the request path)."""
     episodes = list(

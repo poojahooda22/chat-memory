@@ -57,6 +57,11 @@ def _slot_vector(slot: int) -> list[float]:
     return vec
 
 
+def fake_embedding(text: str) -> list[float]:
+    """The deterministic embedding used by FakeLLM — tests seed memories with matching vectors."""
+    return _slot_vector(_concept_slot(text))
+
+
 class FakeLLM:
     """Minimal stand-in for the openai client: .embeddings.create and .chat.completions.create."""
 
@@ -65,9 +70,8 @@ class FakeLLM:
         self.embeddings = SimpleNamespace(create=self._embed)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
 
-    def _embed(self, model: str, input: str):  # noqa: A002 - mirrors openai's param name
-        vector = _slot_vector(_concept_slot(input))
-        return SimpleNamespace(data=[SimpleNamespace(embedding=vector)])
+    def _embed(self, model: str, input: str):  # noqa: A002 - mirrors openai's signature
+        return SimpleNamespace(data=[SimpleNamespace(embedding=fake_embedding(input))])
 
     def _chat(self, **kwargs):
         content = self._chat_replies.pop(0)

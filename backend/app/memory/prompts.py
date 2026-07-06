@@ -82,6 +82,27 @@ def build_decision_messages(fact: str, similar: Sequence[str]) -> list[dict]:
     ]
 
 
+# ── The chat surface (Phase 2): answer with remembered context ───────────────
+
+CHAT_SYSTEM = """You are a warm, helpful assistant with long-term memory of this user.
+
+Use the remembered facts below to personalise your reply whenever they are relevant — greet
+them by what you know, refer to their preferences and history naturally. If the memories do not
+cover what is asked, answer normally. NEVER invent or assume facts about the user that are not
+in the memory or the conversation.
+
+What you remember about this user:
+{memories}"""
+
+
+def build_chat_messages(memories: Sequence[str], history: Sequence[dict], message: str) -> list[dict]:
+    memory_block = "\n".join(f"- {m}" for m in memories) if memories else "(nothing yet)"
+    msgs: list[dict] = [{"role": "system", "content": CHAT_SYSTEM.format(memories=memory_block)}]
+    msgs.extend(history)  # prior turns of this conversation, for short-term continuity
+    msgs.append({"role": "user", "content": message})
+    return msgs
+
+
 # ── The asynchronous summary refresher ───────────────────────────────────────
 
 SUMMARY_SYSTEM = """Summarise the conversation below into a concise running summary (3-5
