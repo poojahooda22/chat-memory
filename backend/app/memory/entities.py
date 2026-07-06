@@ -1,6 +1,6 @@
 """Entity labeling logic: the user names what the vision model detected.
 
-"This is Monty" turns a detected "a golden retriever" into a named Entity. The label is new
+"This is Monty" turns a detected "a golden doodle" into a named Entity. The label is new
 knowledge arriving after the photo happened, so it never rewrites the episode (single-shot
 invariant) — it creates/reuses an Entity row, links it to the episode, and records the fact
 through the memory pipeline's decision phase (which deduplicates repeat labels). The links
@@ -17,6 +17,7 @@ from sqlmodel import Session, col, func, select
 
 from app.config import Settings
 from app.memory.embeddings import embed_text
+from app.memory.graph import rebuild_edges_for_episode
 from app.memory.pipeline import record_fact
 from app.models import Entity, Episode, EpisodeEntity
 
@@ -151,4 +152,9 @@ def apply_label(
         session, client, settings,
         user_id=episode.user_id, fact=fact, source_ids=[str(episode.id)],
     )
+
+    # the graph edges among this photo's now-labeled entities re-form/strengthen — so the
+    # moment a photo has a SECOND named entity, the pair's co-occurrence edge appears
+    rebuild_edges_for_episode(session, episode_id=episode.id)
+
     return LabelResult(entity=entity, memory_event=op.event, reused_existing=existing is not None)

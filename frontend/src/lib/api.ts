@@ -120,6 +120,34 @@ export function uploadImageUrl(jobId: string): string {
   return `${BACKEND_URL}/uploads/${jobId}/image`;
 }
 
+// ── the relationship graph ───────────────────────────────────────────────────
+
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: "person" | "pet" | "object";
+  photo_count: number;
+  representative_job_id: string | null;
+}
+
+export interface GraphEdge {
+  src: string;
+  dst: string;
+  weight: number;
+  cooccur_count: number;
+  is_learning: boolean;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export async function getGraph(): Promise<GraphData> {
+  const { data } = await http.get<GraphData>("/graph", { params: { user_id: USER_ID } });
+  return data;
+}
+
 export interface LabelResponse {
   entity: { id: string; name: string; type: string; description: string };
   memory_event: string;

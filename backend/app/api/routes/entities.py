@@ -11,6 +11,7 @@ from sqlmodel import Session, col, select
 from app.config import get_settings
 from app.db import get_session
 from app.memory.entities import LabelError, apply_label
+from app.memory.graph import rebuild_edges_for_entity
 from app.models import Entity, EpisodeEntity
 
 router = APIRouter(tags=["entities"])
@@ -82,7 +83,12 @@ def unlabel_entity(
     ).first()
     if link is None:
         raise HTTPException(404, "No label on that slot")
+    entity = session.get(Entity, link.entity_id)
     session.delete(link)
+    session.flush()
+    # the removed entity's edges lose this photo (or invalidate if it was their only shared one)
+    if entity is not None:
+        rebuild_edges_for_entity(session, user_id=entity.user_id, entity_id=entity.id)
     session.commit()
     return {"status": "unlabeled"}
 

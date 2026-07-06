@@ -141,6 +141,36 @@ class EpisodeEntity(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class Relationship(SQLModel, table=True):
+    """A weighted edge between two entities — they co-occur in the user's photos.
+
+    Mem0g's labeled edge (§2.2) plus our weight. Stored once per pair (smaller id as src, so
+    Monty–Pooja is one row). An edge that loses all its shared photos is INVALIDATED
+    (is_valid=False), never deleted, so point-in-time questions ("who was connected in 2022")
+    still answer. Rebuilt from the episode_entities links, which are the source of truth.
+    """
+
+    # pyrefly: ignore[bad-override]
+    __tablename__ = "relationships"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(default="default", index=True)
+    src_entity_id: uuid.UUID = Field(foreign_key="entities.id", index=True)
+    dst_entity_id: uuid.UUID = Field(foreign_key="entities.id", index=True)
+    rel_type: str = Field(default="co_occurs_with")
+    weight: float = Field(default=0.0)  # 0..1 strength = cooccur × recency × confidence
+    cooccur_count: int = Field(default=0)  # how many photos the pair shares (the evidence)
+    last_seen_at: datetime | None = Field(default=None)  # newest shared photo → recency
+    mean_confidence: float = Field(default=0.0)  # avg label confidence across shared photos
+    is_valid: bool = Field(default=True, index=True)
+    # receipts: the episodes that built this edge
+    source_episode_ids: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class ConversationSummary(SQLModel, table=True):
     """Rolling summary per conversation, consumed by the extraction step."""
 
