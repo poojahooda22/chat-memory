@@ -29,11 +29,21 @@ from app.config import get_settings
 from app.db import get_session
 from app.ingest.exif import classify_kind, parse_exif
 from app.ingest.pipeline import run_ingest_job
-from app.models import Episode, IngestJob
+from app.models import Entity, Episode, EpisodeEntity, IngestJob
 
 router = APIRouter(tags=["uploads"])
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # a 20MB original is already generous for a photo
+
+
+class EntityChip(BaseModel):
+    """One detected entity on a photo, with the user's label once it has one."""
+
+    index: int
+    type: str
+    description: str
+    confidence: float | None = None
+    label: str | None = None
 
 
 class IngestJobRead(BaseModel):
@@ -45,11 +55,14 @@ class IngestJobRead(BaseModel):
     time_source: str | None
     episode_id: uuid.UUID | None
     caption: str | None
+    entities: list[EntityChip] = []
     error: str | None
     created_at: datetime
 
 
-def _job_out(job: IngestJob, caption: str | None) -> IngestJobRead:
+def _job_out(
+    job: IngestJob, caption: str | None, entities: list[EntityChip] | None = None
+) -> IngestJobRead:
     return IngestJobRead(
         id=job.id,
         kind=job.kind,
@@ -59,6 +72,7 @@ def _job_out(job: IngestJob, caption: str | None) -> IngestJobRead:
         time_source=(job.exif or {}).get("time_source"),
         episode_id=job.episode_id,
         caption=caption,
+        entities=entities or [],
         error=job.error,
         created_at=job.created_at,
     )
@@ -127,13 +141,45 @@ def list_uploads(
     )
     jobs = list(session.exec(stmt).all())
 
-    # one query for the captions of every finished job
+    # one query for the episodes of every finished job, one for their entity labels
     episode_ids = [j.episode_id for j in jobs if j.episode_id is not None]
-    captions: dict[uuid.UUID, str] = {}
+    episodes: dict[uuid.UUID, Episode] = {}
+    labels: dict[uuid.UUID, dict[int, str]] = {}  # episode_id -> {entity_index: name}
     if episode_ids:
         for e in session.exec(select(Episode).where(col(Episode.id).in_(episode_ids))).all():
-            captions[e.id] = e.content
-    return [_job_out(j, captions.get(j.episode_id) if j.episode_id else None) for j in jobs]
+            episodes[e.id] = e
+        rows = session.exec(
+            select(EpisodeEntity, Entity)
+            .join(Entity, col(EpisodeEntity.entity_id) == col(Entity.id))
+            .where(col(EpisodeEntity.episode_id).in_(episode_ids))
+        ).all()
+        for link, entity in rows:
+            labels.setdefault(link.episode_id, {})[link.entity_index] = entity.name
+
+    def _chips(episode: Episode) -> list[EntityChip]:
+        named = labels.get(episode.id, {})
+        return [
+            EntityChip(
+                index=i,
+                type=d.get("type", "object"),
+                description=d.get("description", ""),
+                confidence=d.get("confidence"),
+                label=named.get(i),
+            )
+            for i, d in enumerate((episode.context or {}).get("entities") or [])
+        ]
+
+    out: list[IngestJobRead] = []
+    for j in jobs:
+        episode = episodes.get(j.episode_id) if j.episode_id else None
+        out.append(
+            _job_out(
+                j,
+                caption=episode.content if episode else None,
+                entities=_chips(episode) if episode else [],
+            )
+        )
+    return out
 
 
 @router.get("/uploads/{job_id}/image", operation_id="upload_image_file")

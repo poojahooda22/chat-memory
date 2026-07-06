@@ -62,6 +62,14 @@ export async function deleteMemory(memoryId: string): Promise<void> {
 
 // ── image ingest ─────────────────────────────────────────────────────────────
 
+export interface EntityChip {
+  index: number;
+  type: "person" | "pet" | "object";
+  description: string;
+  confidence: number | null;
+  label: string | null;
+}
+
 export interface IngestJob {
   id: string;
   kind: "photo" | "screenshot";
@@ -71,6 +79,7 @@ export interface IngestJob {
   time_source: string | null;
   episode_id: string | null;
   caption: string | null;
+  entities: EntityChip[];
   error: string | null;
   created_at: string;
 }
@@ -96,4 +105,23 @@ export async function retryUpload(jobId: string): Promise<void> {
 
 export function uploadImageUrl(jobId: string): string {
   return `${BACKEND_URL}/uploads/${jobId}/image`;
+}
+
+export interface LabelResponse {
+  entity: { id: string; name: string; type: string; description: string };
+  memory_event: string;
+  reused_existing: boolean;
+}
+
+/** Name a detected entity on a photo episode: "this is Monty". */
+export async function labelEntity(
+  episodeId: string,
+  entityIndex: number,
+  name: string,
+): Promise<LabelResponse> {
+  const { data } = await http.post<LabelResponse>(`/episodes/${episodeId}/label`, {
+    entity_index: entityIndex,
+    name,
+  });
+  return data;
 }

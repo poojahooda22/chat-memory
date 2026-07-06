@@ -164,6 +164,20 @@ def _process_fact(
     )
 
 
+def record_fact(
+    session: Session, client, settings: Settings, *, user_id: str, fact: str, source_ids: list[str]
+) -> MemoryOperation:
+    """Run ONE already-formed fact through phase 2 (no extraction call needed).
+
+    Used when the fact's shape is known deterministically — e.g. a user labeling an entity
+    ("Monty is the user's pet dog: ..."). The decision phase still deduplicates: labeling the
+    same pet on a second photo lands as NOOP/UPDATE, never a duplicate ADD.
+    """
+    return _process_fact(
+        session, client, settings, fact=fact, user_id=user_id, source_ids=source_ids
+    )
+
+
 def distil_text(
     session: Session, client, settings: Settings, *, user_id: str, text: str, source_ids: list[str]
 ) -> list[MemoryOperation]:

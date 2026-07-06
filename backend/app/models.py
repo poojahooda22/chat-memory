@@ -99,6 +99,46 @@ class IngestJob(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class Entity(SQLModel, table=True):
+    """A named thing in the user's life — a person, pet, or object the user has labeled.
+
+    Created the moment the user names a detected entity ("this is Monty"). The label is new
+    knowledge arriving AFTER the photo happened, so it lives here — never written back into
+    the episode, which stays single-shot. Entities are the nodes the relationship graph
+    (plan §12.4) connects; co-occurrence is read off the episode_entities links.
+    """
+
+    # pyrefly: ignore[bad-override]
+    __tablename__ = "entities"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(default="default", index=True)
+    name: str = Field(index=True)  # the user's label: "Monty", "Akshay", "me"
+    type: str = Field(default="object")  # person | pet | object
+    description: str = Field(default="", sa_column=Column(Text, nullable=False))
+    embedding: list[float] | None = Field(
+        default=None, sa_column=Column(Vector(EMBEDDING_DIM), nullable=True)
+    )
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class EpisodeEntity(SQLModel, table=True):
+    """Link: this entity appears in this episode (at detected-entity slot entity_index).
+
+    The substrate of the future graph: two entities co-occur when they share an episode_id.
+    """
+
+    # pyrefly: ignore[bad-override]
+    __tablename__ = "episode_entities"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    episode_id: uuid.UUID = Field(foreign_key="episodes.id", index=True)
+    entity_id: uuid.UUID = Field(foreign_key="entities.id", index=True)
+    entity_index: int = Field(default=0)  # which chip in the episode's context.entities
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class ConversationSummary(SQLModel, table=True):
     """Rolling summary per conversation, consumed by the extraction step."""
 

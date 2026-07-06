@@ -1,8 +1,16 @@
 import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock3, ImagePlus, Loader2, RotateCcw, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, ImagePlus, Loader2, PawPrint, RotateCcw, Tag, User, XCircle } from "lucide-react";
 
-import { listUploads, retryUpload, uploadImages, uploadImageUrl, type IngestJob } from "@/lib/api";
+import {
+  labelEntity,
+  listUploads,
+  retryUpload,
+  uploadImages,
+  uploadImageUrl,
+  type EntityChip,
+  type IngestJob,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const STATUS: Record<IngestJob["status"], { icon: typeof Clock3; label: string; cls: string }> = {
@@ -11,6 +19,79 @@ const STATUS: Record<IngestJob["status"], { icon: typeof Clock3; label: string; 
   done: { icon: CheckCircle2, label: "remembered", cls: "text-emerald-500" },
   failed: { icon: XCircle, label: "failed", cls: "text-destructive" },
 };
+
+/** Detected people/pets on a photo: labeled ones show their name; unlabeled ones ask for it.
+ * Naming an entity is how "a golden retriever" becomes Monty everywhere. */
+function EntityChips({ job }: { job: IngestJob }) {
+  const queryClient = useQueryClient();
+  const [naming, setNaming] = useState<number | null>(null);
+  const [value, setValue] = useState("");
+
+  const label = useMutation({
+    mutationFn: ({ index, name }: { index: number; name: string }) =>
+      labelEntity(job.episode_id!, index, name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["uploads"] });
+      queryClient.invalidateQueries({ queryKey: ["memories"] });
+    },
+  });
+
+  const nameable = job.entities.filter((e) => e.type === "person" || e.type === "pet");
+  if (!job.episode_id || nameable.length === 0) return null;
+
+  function commit(chip: EntityChip) {
+    const name = value.trim();
+    if (name) label.mutate({ index: chip.index, name });
+    setNaming(null);
+    setValue("");
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {nameable.map((chip) => {
+        const Icon = chip.type === "pet" ? PawPrint : User;
+        if (naming === chip.index) {
+          return (
+            <input
+              key={chip.index}
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); commit(chip); }
+                else if (e.key === "Escape") { e.preventDefault(); setNaming(null); setValue(""); }
+              }}
+              onBlur={() => commit(chip)}
+              placeholder={`name ${chip.description}…`}
+              className="border-ring/60 bg-background w-44 rounded-full border px-2.5 py-0.5 text-xs focus:outline-none"
+            />
+          );
+        }
+        return chip.label ? (
+          <span
+            key={chip.index}
+            title={chip.description}
+            className="bg-secondary text-secondary-foreground inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
+          >
+            <Icon className="size-3" /> {chip.label}
+          </span>
+        ) : (
+          <button
+            key={chip.index}
+            onClick={() => { setNaming(chip.index); setValue(""); }}
+            title="Give this a name so your memory knows who it is"
+            className="border-border text-muted-foreground hover:border-ring/60 hover:text-foreground inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-0.5 text-xs transition-colors"
+          >
+            <Tag className="size-3" /> {chip.description} — name this
+          </button>
+        );
+      })}
+      {label.isError && (
+        <span className="text-destructive text-xs">{(label.error as Error).message}</span>
+      )}
+    </div>
+  );
+}
 
 /** The mouth of the memory: feed it your photos and screenshots. Each upload is captioned,
  * timestamped from its EXIF when possible, and distilled into memories. */
@@ -127,6 +208,7 @@ export function Sources() {
                   {job.status === "done" && job.caption && (
                     <p className="mt-1.5 line-clamp-2 text-xs">{job.caption}</p>
                   )}
+                  {job.status === "done" && <EntityChips job={job} />}
                   {job.status === "failed" && (
                     <p className="text-destructive mt-1.5 line-clamp-2 text-xs">{job.error}</p>
                   )}
