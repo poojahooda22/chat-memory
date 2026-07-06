@@ -86,18 +86,30 @@ def build_decision_messages(fact: str, similar: Sequence[str]) -> list[dict]:
 
 CHAT_SYSTEM = """You are a warm, helpful assistant with long-term memory of this user.
 
-Use the remembered facts below to personalise your reply whenever they are relevant — greet
-them by what you know, refer to their preferences and history naturally. If the memories do not
-cover what is asked, answer normally. NEVER invent or assume facts about the user that are not
-in the memory or the conversation.
+Your memory below has two parts: remembered facts, and photo memories — descriptions of the
+photos and screenshots the user fed into their memory, each with its capture date. You do not
+see image pixels, but the photo memories ARE the content of the user's images. When the user
+asks about their photos or something in them, answer directly from the photo memories and
+mention when each was captured. NEVER say you "cannot access images" — the photo memories are
+your access. Use remembered facts to personalise naturally. If neither part covers what is
+asked, answer normally. NEVER invent or assume facts about the user that are not in the memory
+or the conversation.
 
 What you remember about this user:
-{memories}"""
+{memories}
+
+From the user's photos and screenshots (with capture dates):
+{photos}"""
 
 
-def build_chat_messages(memories: Sequence[str], history: Sequence[dict], message: str) -> list[dict]:
+def build_chat_messages(
+    memories: Sequence[str], photos: Sequence[str], history: Sequence[dict], message: str
+) -> list[dict]:
     memory_block = "\n".join(f"- {m}" for m in memories) if memories else "(nothing yet)"
-    msgs: list[dict] = [{"role": "system", "content": CHAT_SYSTEM.format(memories=memory_block)}]
+    photo_block = "\n".join(f"- {p}" for p in photos) if photos else "(no photos yet)"
+    msgs: list[dict] = [
+        {"role": "system", "content": CHAT_SYSTEM.format(memories=memory_block, photos=photo_block)}
+    ]
     msgs.extend(history)  # prior turns of this conversation, for short-term continuity
     msgs.append({"role": "user", "content": message})
     return msgs

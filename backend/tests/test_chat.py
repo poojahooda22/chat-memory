@@ -52,6 +52,33 @@ def test_chat_retrieves_memory_and_answers_from_it(db_session):
     assert len(episodes) == 2
 
 
+def test_chat_retrieves_photo_episodes(db_session):
+    """A photo fed via Sources is retrievable in chat — the episodic layer reaches the prompt."""
+    from datetime import UTC, datetime
+
+    user = _user()
+    photo = Episode(
+        user_id=user,
+        conversation_id=None,
+        occurred_at=datetime(2023, 5, 22, 19, 40, tzinfo=UTC),
+        content="A small, fluffy dog with a light brown coat is lying on a patterned blanket.",
+        context={"source": "image", "kind": "photo", "entities": []},
+        embedding=fake_embedding("A small, fluffy dog with a light brown coat"),
+    )
+    db_session.add(photo)
+    db_session.flush()
+
+    llm = FakeLLM(["Your photos show your fluffy dog!", json.dumps({"facts": []})])
+    result = answer(
+        db_session, llm, SETTINGS,
+        user_id=user, conversation_id="c1", message="what do my photos show about my dog?",
+    )
+
+    assert len(result.photos_used) == 1
+    assert result.photos_used[0].startswith("[captured 2023-05-22]")
+    assert "fluffy dog" in result.photos_used[0]
+
+
 def test_chat_records_a_new_fact_stated_mid_conversation(db_session):
     user = _user()
     # reply, extraction finds a fact, decision ADDs it

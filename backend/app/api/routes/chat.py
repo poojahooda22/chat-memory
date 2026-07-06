@@ -25,6 +25,7 @@ class OperationOut(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     memories_used: list[str]  # the memories the assistant drew on — visible for transparency
+    photos_used: list[str]  # photo-derived episodes it drew on, with capture dates
     operations: list[OperationOut]  # what this turn changed in memory
 
 
@@ -52,6 +53,7 @@ def chat(
     return ChatResponse(
         reply=result.reply,
         memories_used=result.memories_used,
+        photos_used=result.photos_used,
         operations=[
             OperationOut(event=o.event, memory_id=o.memory_id, text=o.text)
             for o in result.operations

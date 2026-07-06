@@ -40,7 +40,8 @@ export function Home() {
       appendTurn(active.id, {
         role: "assistant",
         content: res.reply,
-        memoriesUsed: res.memories_used,
+        // photo-derived recalls carry a camera marker so their origin is visible
+        memoriesUsed: [...res.memories_used, ...res.photos_used.map((p) => `📷 ${p}`)],
       });
       queryClient.invalidateQueries({ queryKey: ["memories"] });
       scrollToBottom();

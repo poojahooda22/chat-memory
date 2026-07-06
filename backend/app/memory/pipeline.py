@@ -234,6 +234,30 @@ def search_memories(
     return _search_similar(session, user_id=user_id, embedding=embedding, limit=limit)
 
 
+def search_image_episodes(
+    session: Session, client, settings: Settings, *, user_id: str, query: str, limit: int = 3
+) -> list[Episode]:
+    """Read path over the episodic layer: the image-derived episodes most similar to a query.
+
+    Chat injects these alongside distilled facts — the plan's 'retrieval searches both stores'.
+    Uses the HNSW index on episodes.embedding; filtered to source='image' so chat turns don't
+    echo back into the prompt as photos.
+    """
+    embedding = embed_text(client, settings.embedding_model, query)
+    stmt = (
+        select(Episode)
+        .where(
+            Episode.user_id == user_id,
+            col(Episode.context)["source"].astext == "image",
+            col(Episode.embedding).is_not(None),
+        )
+        # pyrefly: ignore[missing-attribute]  — pgvector comparator missing from stubs
+        .order_by(col(Episode.embedding).cosine_distance(embedding))
+        .limit(limit)
+    )
+    return list(session.exec(stmt).all())
+
+
 def run_summary_refresh(engine, client, settings: Settings, conversation_id: str) -> None:
     """Background entry point: refresh a conversation's summary in its own session.
 

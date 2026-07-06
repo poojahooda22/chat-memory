@@ -10,11 +10,17 @@ from dataclasses import dataclass
 from sqlmodel import Session, col, select
 
 from app.config import Settings
-from app.memory.pipeline import MemoryOperation, record_exchange, search_memories
+from app.memory.pipeline import (
+    MemoryOperation,
+    record_exchange,
+    search_image_episodes,
+    search_memories,
+)
 from app.memory.prompts import build_chat_messages
 from app.models import Episode
 
 RETRIEVE_TOP_K = 5   # memories injected into the chat prompt
+PHOTO_TOP_K = 3      # image-derived episodes injected alongside them
 HISTORY_TURNS = 6    # recent turns kept for short-term continuity
 
 
@@ -22,6 +28,7 @@ HISTORY_TURNS = 6    # recent turns kept for short-term continuity
 class ChatResult:
     reply: str
     memories_used: list[str]
+    photos_used: list[str]
     operations: list[MemoryOperation]
 
 
@@ -49,15 +56,21 @@ def answer(
     conversation_id: str | None,
     message: str,
 ) -> ChatResult:
-    # 1. RETRIEVE — the memories most relevant to what was asked (read path)
+    # 1. RETRIEVE — both stores: distilled facts AND the photo episodes themselves
     memories = search_memories(
         session, client, settings, user_id=user_id, query=message, limit=RETRIEVE_TOP_K
     )
     memory_texts = [m.content for m in memories]
+    photo_episodes = search_image_episodes(
+        session, client, settings, user_id=user_id, query=message, limit=PHOTO_TOP_K
+    )
+    photo_texts = [
+        f"[captured {e.occurred_at.date().isoformat()}] {e.content}" for e in photo_episodes
+    ]
 
-    # 2. AUGMENT — inject those memories + recent turns + the new message
+    # 2. AUGMENT — inject memories + photo memories + recent turns + the new message
     history = _recent_turns(session, user_id=user_id, conversation_id=conversation_id)
-    messages = build_chat_messages(memory_texts, history, message)
+    messages = build_chat_messages(memory_texts, photo_texts, history, message)
 
     # 3. GENERATE — a natural reply (higher temperature than the deterministic pipeline decisions)
     completion = client.chat.completions.create(
@@ -75,4 +88,9 @@ def answer(
         ],
     )
 
-    return ChatResult(reply=reply, memories_used=memory_texts, operations=recorded.operations)
+    return ChatResult(
+        reply=reply,
+        memories_used=memory_texts,
+        photos_used=photo_texts,
+        operations=recorded.operations,
+    )

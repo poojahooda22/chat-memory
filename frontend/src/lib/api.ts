@@ -30,6 +30,7 @@ export interface MemoryOperation {
 export interface ChatResponse {
   reply: string;
   memories_used: string[];
+  photos_used: string[];
   operations: MemoryOperation[];
 }
 
