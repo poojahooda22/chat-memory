@@ -7,6 +7,9 @@
 .cursor/
 .gemini/
 
+# user-uploaded media — personal photos never reach git
+backend/uploads/
+
 # python
 __pycache__/
 *.py[cod]

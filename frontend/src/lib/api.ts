@@ -58,3 +58,41 @@ export async function getMemoryHistory(memoryId: string): Promise<HistoryEntry[]
 export async function deleteMemory(memoryId: string): Promise<void> {
   await http.delete(`/memories/${memoryId}`);
 }
+
+// ── image ingest ─────────────────────────────────────────────────────────────
+
+export interface IngestJob {
+  id: string;
+  kind: "photo" | "screenshot";
+  status: "queued" | "processing" | "done" | "failed";
+  filename: string;
+  captured_at: string | null;
+  time_source: string | null;
+  episode_id: string | null;
+  caption: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+/** EXIF contract: append the RAW File objects — never a canvas re-encode, which would strip
+ * the photo's capture time + GPS before the bytes ever leave the browser. */
+export async function uploadImages(files: File[]): Promise<IngestJob[]> {
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+  form.append("user_id", USER_ID);
+  const { data } = await http.post<IngestJob[]>("/uploads", form);
+  return data;
+}
+
+export async function listUploads(): Promise<IngestJob[]> {
+  const { data } = await http.get<IngestJob[]>("/uploads", { params: { user_id: USER_ID } });
+  return data;
+}
+
+export async function retryUpload(jobId: string): Promise<void> {
+  await http.post(`/uploads/${jobId}/retry`);
+}
+
+export function uploadImageUrl(jobId: string): string {
+  return `${BACKEND_URL}/uploads/${jobId}/image`;
+}

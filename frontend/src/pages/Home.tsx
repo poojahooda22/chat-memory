@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Paperclip } from "lucide-react";
+import { useNavigate } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { sendChat, type ChatResponse } from "@/lib/api";
+import { sendChat, uploadImages, type ChatResponse } from "@/lib/api";
 import { useConversations } from "@/lib/conversations";
 import { cn } from "@/lib/utils";
 
@@ -17,9 +18,21 @@ const SUGGESTIONS = [
 export function Home() {
   const { active, appendTurn } = useConversations();
   const [draft, setDraft] = useState("");
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const empty = active.turns.length === 0;
+
+  const imageUpload = useMutation({
+    mutationFn: uploadImages,
+    onSuccess: (jobs) => {
+      queryClient.invalidateQueries({ queryKey: ["uploads"] });
+      setUploadNote(`${jobs.length} image${jobs.length > 1 ? "s" : ""} feeding your memory`);
+    },
+    onError: (err: Error) => setUploadNote(`upload failed: ${err.message}`),
+  });
 
   const mutation = useMutation({
     mutationFn: (message: string) => sendChat(message, active.id),
@@ -51,6 +64,19 @@ export function Home() {
 
   // Perplexity-style composer: an elevated bg-card shell with an auto-growing bare textarea
   const composer = (
+    <div className="w-full">
+      {uploadNote && (
+        <button
+          type="button"
+          onClick={() => {
+            setUploadNote(null);
+            navigate("/sources");
+          }}
+          className="text-muted-foreground hover:text-foreground mb-1.5 text-xs underline-offset-2 hover:underline"
+        >
+          {uploadNote} — view in Sources
+        </button>
+      )}
     <form
       onSubmit={(e) => {
         e.preventDefault();
@@ -59,6 +85,29 @@ export function Home() {
       className="border-border bg-card focus-within:border-ring/60 w-full rounded-2xl border px-3 py-2"
     >
       <div className="flex items-end gap-2">
+        <button
+          type="button"
+          aria-label="Add photos to memory"
+          onClick={() => fileRef.current?.click()}
+          className="text-muted-foreground hover:bg-secondary hover:text-foreground mb-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors"
+        >
+          <Paperclip className="size-4" />
+        </button>
+        {/* raw File objects go straight to FormData — EXIF survives (no canvas re-encode) */}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []).filter((f) =>
+              f.type.startsWith("image/"),
+            );
+            if (files.length) imageUpload.mutate(files);
+            e.target.value = "";
+          }}
+        />
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -87,6 +136,7 @@ export function Home() {
         </button>
       </div>
     </form>
+    </div>
   );
 
   // ── Empty state: centered composer + suggestions (Perplexity/Lumina home) ──

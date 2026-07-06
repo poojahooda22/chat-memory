@@ -12,6 +12,8 @@ dependencies = [
     "pgvector>=0.3",
     "alembic>=1.14",
     "openai>=1.60",
+    "pillow>=12.3.0",
+    "python-multipart>=0.0.32",
 ]
 
 [dependency-groups]

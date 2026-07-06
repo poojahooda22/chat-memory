@@ -136,22 +136,52 @@ def record_exchange(
 
     # ── phase 2: per-fact ADD / UPDATE / DELETE / NOOP ──
     for fact in facts:
-        fact_embedding = embed_text(client, settings.embedding_model, fact)
-        similar = _search_similar(
-            session, user_id=user_id, embedding=fact_embedding, limit=SIMILAR_TOP_K
+        result.operations.append(
+            _process_fact(
+                session, client, settings, fact=fact, user_id=user_id, source_ids=source_ids
+            )
         )
-        decision = _chat_json(
-            client, settings.llm_model,
-            build_decision_messages(fact, [m.content for m in similar]),
-        )
-        op = _apply_decision(
-            session, client, settings,
-            fact=fact, fact_embedding=fact_embedding, similar=similar,
-            decision=decision, user_id=user_id, source_ids=source_ids,
-        )
-        result.operations.append(op)
 
     return result
+
+
+def _process_fact(
+    session: Session, client, settings: Settings, *, fact: str, user_id: str, source_ids: list[str]
+) -> MemoryOperation:
+    """Phase 2 for ONE fact: embed -> top-k similar -> LLM decision -> apply + audit row."""
+    fact_embedding = embed_text(client, settings.embedding_model, fact)
+    similar = _search_similar(
+        session, user_id=user_id, embedding=fact_embedding, limit=SIMILAR_TOP_K
+    )
+    decision = _chat_json(
+        client, settings.llm_model,
+        build_decision_messages(fact, [m.content for m in similar]),
+    )
+    return _apply_decision(
+        session, client, settings,
+        fact=fact, fact_embedding=fact_embedding, similar=similar,
+        decision=decision, user_id=user_id, source_ids=source_ids,
+    )
+
+
+def distil_text(
+    session: Session, client, settings: Settings, *, user_id: str, text: str, source_ids: list[str]
+) -> list[MemoryOperation]:
+    """Extraction + per-fact decisions over ONE standalone text.
+
+    The path for non-chat episode writers (image ingest, future connectors): the caller has
+    already written the episode; this runs the same two Mem0 phases over its content so the
+    episode distils into semantic memories exactly like a chat exchange does.
+    """
+    extraction = _chat_json(
+        client, settings.llm_model,
+        build_extraction_messages("", [], [{"role": "user", "content": text}]),
+    )
+    facts = [f.strip() for f in extraction.get("facts", []) if isinstance(f, str) and f.strip()]
+    return [
+        _process_fact(session, client, settings, fact=fact, user_id=user_id, source_ids=source_ids)
+        for fact in facts
+    ]
 
 
 def _apply_decision(

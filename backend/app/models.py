@@ -71,6 +71,34 @@ class MemoryHistory(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class IngestJob(SQLModel, table=True):
+    """One uploaded image working its way into memory.
+
+    The request path writes ONLY this row (plus the file on disk) and returns 202; the
+    worker reads it, runs the vision call, and inserts the Episode exactly once — so the
+    Episode keeps its single-shot invariant (never a mutable placeholder). `episode_id`
+    doubles as the idempotency guard: a retry of a job that already produced an episode
+    can never insert a second one.
+    """
+
+    # pyrefly: ignore[bad-override]
+    __tablename__ = "ingest_jobs"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(default="default", index=True)
+    kind: str = Field(default="photo")  # photo | screenshot
+    status: str = Field(default="queued", index=True)  # queued | processing | done | failed
+    filename: str = Field(default="")
+    content_type: str = Field(default="image/jpeg")
+    image_path: str = Field(sa_column=Column(Text, nullable=False))
+    # parsed at upload time: captured_at, lat/lon, camera, and which source occurred_at used
+    exif: dict = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
+    episode_id: uuid.UUID | None = Field(default=None, foreign_key="episodes.id")
+    error: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class ConversationSummary(SQLModel, table=True):
     """Rolling summary per conversation, consumed by the extraction step."""
 
