@@ -5,6 +5,7 @@ export type Theme = "dark" | "light";
 
 interface ThemeContextValue {
   theme: Theme;
+  setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
 }
 
@@ -33,12 +34,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [theme]);
 
+  const setThemeExplicit = useCallback((next: Theme) => setTheme(next), []);
   const toggleTheme = useCallback(
     () => setTheme((prev) => (prev === "dark" ? "light" : "dark")),
     [],
   );
 
-  const value = useMemo(() => ({ theme, toggleTheme }), [theme, toggleTheme]);
+  const value = useMemo(
+    () => ({ theme, setTheme: setThemeExplicit, toggleTheme }),
+    [theme, setThemeExplicit, toggleTheme],
+  );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 

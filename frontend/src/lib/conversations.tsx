@@ -23,6 +23,8 @@ interface Store {
   newChat: () => string;
   selectChat: (id: string) => void;
   appendTurn: (id: string, turn: Turn) => void;
+  renameChat: (id: string, title: string) => void;
+  deleteChat: (id: string) => void;
 }
 
 const STORAGE_KEY = "chat-memory:conversations";
@@ -78,12 +80,27 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const renameChat = useCallback((id: string, title: string) => {
+    setConversations((cs) => cs.map((c) => (c.id === id ? { ...c, title } : c)));
+  }, []);
+
+  const deleteChat = useCallback((id: string) => {
+    setConversations((cs) => {
+      const remaining = cs.filter((c) => c.id !== id);
+      const next = remaining.length ? remaining : [{ id: newId(), title: "New chat", turns: [] }];
+      setActiveId((current) => (current === id ? next[0]!.id : current));
+      return next;
+    });
+  }, []);
+
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0]!,
     [conversations, activeId],
   );
 
-  const value: Store = { conversations, activeId, active, newChat, selectChat, appendTurn };
+  const value: Store = {
+    conversations, activeId, active, newChat, selectChat, appendTurn, renameChat, deleteChat,
+  };
   return <ConversationsContext.Provider value={value}>{children}</ConversationsContext.Provider>;
 }
 
