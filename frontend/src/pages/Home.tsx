@@ -4,8 +4,6 @@ import { ArrowUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { sendChat, type ChatResponse } from "@/lib/api";
 import { useConversations } from "@/lib/conversations";
 import { cn } from "@/lib/utils";
@@ -51,30 +49,44 @@ export function Home() {
     scrollToBottom();
   }
 
+  // Perplexity-style composer: an elevated bg-card shell with an auto-growing bare textarea
   const composer = (
-    <div className="relative w-full">
-      <Textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send(draft);
-          }
-        }}
-        placeholder="Ask anything…"
-        className="max-h-40 resize-none rounded-xl pr-12"
-        rows={2}
-      />
-      <Button
-        size="icon-sm"
-        onClick={() => send(draft)}
-        disabled={!draft.trim() || mutation.isPending}
-        className="absolute right-2.5 bottom-2.5"
-      >
-        <ArrowUp />
-      </Button>
-    </div>
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        send(draft);
+      }}
+      className="border-border bg-card focus-within:border-ring/60 w-full rounded-2xl border px-3 py-2"
+    >
+      <div className="flex items-end gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send(draft);
+            }
+          }}
+          rows={1}
+          placeholder="Ask anything…"
+          className="field-sizing-content text-foreground placeholder:text-muted-foreground block max-h-[30vh] min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent py-1.5 text-[15px] focus:outline-none"
+        />
+        <button
+          type="submit"
+          aria-label="Send"
+          disabled={!draft.trim() || mutation.isPending}
+          className={cn(
+            "inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+            draft.trim() && !mutation.isPending
+              ? "bg-primary text-primary-foreground hover:opacity-90"
+              : "bg-secondary text-muted-foreground",
+          )}
+        >
+          <ArrowUp className="size-4" />
+        </button>
+      </div>
+    </form>
   );
 
   // ── Empty state: centered composer + suggestions (Perplexity/Lumina home) ──
@@ -101,10 +113,12 @@ export function Home() {
     );
   }
 
-  // ── Conversation view: the list scrolls, the composer stays pinned at the bottom ──
+  // ── Conversation view: the scroll container is FULL-WIDTH (scrollbar at the page edge,
+  //    matching the sibling app); the centered column lives inside it; composer pinned below ──
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-6">
+    <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl space-y-4 px-4 py-6">
         {active.turns.map((turn, i) => (
           <div key={i} className={cn("flex", turn.role === "user" ? "justify-end" : "justify-start")}>
             <div
@@ -127,9 +141,12 @@ export function Home() {
             </div>
           </div>
         ))}
-        {mutation.isPending && <div className="text-muted-foreground text-xs">thinking…</div>}
+          {mutation.isPending && <div className="text-muted-foreground text-xs">thinking…</div>}
+        </div>
       </div>
-      <div className="shrink-0 px-4 pb-4">{composer}</div>
+      <div className="shrink-0 px-4 py-3">
+        <div className="mx-auto w-full max-w-3xl">{composer}</div>
+      </div>
     </div>
   );
 }
