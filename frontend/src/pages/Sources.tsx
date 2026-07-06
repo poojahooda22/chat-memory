@@ -81,15 +81,44 @@ function EntityChips({ job }: { job: IngestJob }) {
             />
           );
         }
-        return chip.label ? (
-          <span
-            key={chip.index}
-            title={chip.description}
-            className="bg-secondary text-secondary-foreground inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
-          >
-            <Icon className="size-3" /> {chip.label}
-          </span>
-        ) : (
+        if (chip.label) {
+          return (
+            <span
+              key={chip.index}
+              title={chip.description}
+              className="bg-secondary text-secondary-foreground inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
+            >
+              <Icon className="size-3" /> {chip.label}
+            </span>
+          );
+        }
+        if (chip.suggested_name) {
+          // recognition proposal: one click confirms; the pencil names it differently
+          return (
+            <span
+              key={chip.index}
+              className="border-ring/50 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs"
+            >
+              <Icon className="size-3" />
+              <span className="text-muted-foreground">{chip.description} —</span>
+              <button
+                onClick={() => label.mutate({ index: chip.index, name: chip.suggested_name! })}
+                title={`Confirm this is ${chip.suggested_name}`}
+                className="hover:text-foreground font-medium underline-offset-2 hover:underline"
+              >
+                {chip.suggested_name}? ✓
+              </button>
+              <button
+                onClick={() => { setNaming(chip.index); setValue(""); }}
+                title="No — name it differently"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Tag className="size-3" />
+              </button>
+            </span>
+          );
+        }
+        return (
           <button
             key={chip.index}
             onClick={() => { setNaming(chip.index); setValue(""); }}

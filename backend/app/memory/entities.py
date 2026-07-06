@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, col, func, select
 
 from app.config import Settings
 from app.memory.embeddings import embed_text
@@ -23,6 +23,51 @@ from app.models import Entity, Episode, EpisodeEntity
 
 class LabelError(ValueError):
     """Raised when the episode or the detected-entity slot doesn't exist."""
+
+
+# How close a detected description must be to a labeled entity before we SUGGEST its name.
+# Cosine distance over text-embedding-3-small; tuned against real data (a matching pet pair
+# lands well under this, an unrelated person/object well over). A suggestion is never an
+# auto-label: the user confirms identity — the system only proposes.
+SUGGEST_MAX_DISTANCE = 0.55
+
+
+def suggest_entity(
+    session: Session,
+    client,
+    settings: Settings,
+    *,
+    user_id: str,
+    entity_type: str,
+    description: str,
+) -> tuple[Entity, float] | None:
+    """The recognition step without biometrics: does this detected person/pet DESCRIPTION
+    look like an entity the user already named? Embeds the description and cosine-matches
+    against same-type labeled entities (HNSW index). Returns (entity, distance) when the
+    best match is close enough, else None."""
+    if not description.strip():
+        return None
+    embedding = embed_text(client, settings.embedding_model, description)
+    stmt = (
+        select(
+            Entity,
+            # pyrefly: ignore[missing-attribute]  — pgvector comparator missing from stubs
+            col(Entity.embedding).cosine_distance(embedding).label("distance"),
+        )
+        .where(
+            Entity.user_id == user_id,
+            Entity.type == entity_type,
+            col(Entity.embedding).is_not(None),
+        )
+        # pyrefly: ignore[missing-attribute]
+        .order_by(col(Entity.embedding).cosine_distance(embedding))
+        .limit(1)
+    )
+    row = session.exec(stmt).first()
+    if row is None:
+        return None
+    entity, distance = row
+    return (entity, float(distance)) if distance <= SUGGEST_MAX_DISTANCE else None
 
 
 @dataclass

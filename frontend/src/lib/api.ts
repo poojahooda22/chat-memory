@@ -68,6 +68,8 @@ export interface EntityChip {
   description: string;
   confidence: number | null;
   label: string | null;
+  /** recognition: looks like an entity you already named — confirm to apply */
+  suggested_name: string | null;
 }
 
 export interface IngestJob {

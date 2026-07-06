@@ -30,6 +30,7 @@ from app.db import get_session
 from app.ingest.exif import classify_kind, parse_exif
 from app.ingest.forget import forget_job
 from app.ingest.pipeline import run_ingest_job
+from app.memory.entities import suggest_entity
 from app.models import Entity, Episode, EpisodeEntity, IngestJob
 
 router = APIRouter(tags=["uploads"])
@@ -45,6 +46,8 @@ class EntityChip(BaseModel):
     description: str
     confidence: float | None = None
     label: str | None = None
+    # recognition: "looks like an entity you already named" — a proposal the user confirms
+    suggested_name: str | None = None
 
 
 class IngestJobRead(BaseModel):
@@ -132,7 +135,9 @@ def upload_images(
 
 @router.get("/uploads", operation_id="list_uploads", response_model=list[IngestJobRead])
 def list_uploads(
-    user_id: str = "default", session: Session = Depends(get_session)
+    request: Request,
+    user_id: str = "default",
+    session: Session = Depends(get_session),
 ) -> list[IngestJobRead]:
     stmt = (
         select(IngestJob)
@@ -157,18 +162,38 @@ def list_uploads(
         for link, entity in rows:
             labels.setdefault(link.episode_id, {})[link.entity_index] = entity.name
 
+    # recognition memo: identical descriptions across photos embed + match only once
+    settings = get_settings()
+    suggestion_cache: dict[tuple[str, str], str | None] = {}
+
     def _chips(episode: Episode) -> list[EntityChip]:
         named = labels.get(episode.id, {})
-        return [
-            EntityChip(
-                index=i,
-                type=d.get("type", "object"),
-                description=d.get("description", ""),
-                confidence=d.get("confidence"),
-                label=named.get(i),
+        chips: list[EntityChip] = []
+        for i, d in enumerate((episode.context or {}).get("entities") or []):
+            entity_type = d.get("type", "object")
+            description = d.get("description", "")
+            suggested = None
+            # only unlabeled people/pets get a recognition pass
+            if named.get(i) is None and entity_type in ("person", "pet"):
+                key = (entity_type, description)
+                if key not in suggestion_cache:
+                    match = suggest_entity(
+                        session, request.app.state.llm, settings,
+                        user_id=user_id, entity_type=entity_type, description=description,
+                    )
+                    suggestion_cache[key] = match[0].name if match else None
+                suggested = suggestion_cache[key]
+            chips.append(
+                EntityChip(
+                    index=i,
+                    type=entity_type,
+                    description=description,
+                    confidence=d.get("confidence"),
+                    label=named.get(i),
+                    suggested_name=suggested,
+                )
             )
-            for i, d in enumerate((episode.context or {}).get("entities") or [])
-        ]
+        return chips
 
     out: list[IngestJobRead] = []
     for j in jobs:

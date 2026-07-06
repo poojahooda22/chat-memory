@@ -87,6 +87,38 @@ def test_labeling_same_name_reuses_entity(db_session):
     assert len(links) == 2  # ...linked to both episodes: the graph's co-occurrence substrate
 
 
+def test_suggest_entity_recognizes_similar_description(db_session):
+    """A new photo's 'a small dog with fluffy fur' should propose the already-named Monty —
+    same type + close description; an unrelated description or type proposes nothing."""
+    from app.memory.entities import suggest_entity
+
+    user = f"test-{uuid.uuid4()}"
+    monty = Entity(
+        user_id=user, name="Monty", type="pet", description="a small fluffy dog",
+        embedding=fake_embedding("Monty: a small fluffy dog"),
+    )
+    db_session.add(monty)
+    db_session.flush()
+
+    llm = FakeLLM([])  # suggestion only embeds — no chat calls
+    hit = suggest_entity(
+        db_session, llm, SETTINGS,
+        user_id=user, entity_type="pet", description="a small dog with fluffy fur",
+    )
+    assert hit is not None and hit[0].name == "Monty"
+
+    # wrong type: a person chip never matches a pet entity
+    assert suggest_entity(
+        db_session, llm, SETTINGS,
+        user_id=user, entity_type="person", description="a small dog with fluffy fur",
+    ) is None
+    # unrelated description: too far to propose
+    assert suggest_entity(
+        db_session, llm, SETTINGS,
+        user_id=user, entity_type="pet", description="a terrace railing at sunset",
+    ) is None
+
+
 def test_label_rejects_bad_slot(db_session):
     user = f"test-{uuid.uuid4()}"
     episode = _photo_episode(db_session, user)
