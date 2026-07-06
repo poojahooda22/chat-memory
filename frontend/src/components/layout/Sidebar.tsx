@@ -4,6 +4,7 @@ import {
   Database,
   History,
   MoreHorizontal,
+  Orbit,
   PanelLeft,
   Pencil,
   Plus,
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
 // chat. Only Memory and Sources are separate destinations.
 const NAV = [
   { to: "/memory", label: "Memory", icon: Sparkles },
+  { to: "/moments", label: "Moments", icon: Orbit },
   { to: "/sources", label: "Sources", icon: Database },
 ];
 

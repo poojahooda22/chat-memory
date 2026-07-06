@@ -9,11 +9,13 @@ import { ConversationsProvider } from "@/lib/conversations";
 import { queryClient } from "@/lib/query";
 import { Home } from "@/pages/Home";
 import { Memory } from "@/pages/Memory";
+import { Moments } from "@/pages/Moments";
 import { Sources } from "@/pages/Sources";
 
 const TITLES: Record<string, string> = {
   "/": "Chat",
   "/memory": "Memory",
+  "/moments": "Moments",
   "/sources": "Sources",
 };
 
@@ -24,6 +26,7 @@ function Shell() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/memory" element={<Memory />} />
+        <Route path="/moments" element={<Moments />} />
         <Route path="/sources" element={<Sources />} />
       </Routes>
     </AppShell>
