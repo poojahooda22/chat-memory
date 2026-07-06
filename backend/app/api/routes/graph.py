@@ -20,6 +20,7 @@ class GraphNode(BaseModel):
     type: str
     photo_count: int
     representative_job_id: uuid.UUID | None  # a photo to show inside the node bubble
+    photo_job_ids: list[uuid.UUID] = []  # every photo this entity is in (membership spokes)
 
 
 class GraphEdge(BaseModel):
@@ -48,21 +49,23 @@ def get_graph(user_id: str = "default", session: Session = Depends(get_session))
             .group_by(col(EpisodeEntity.entity_id))
         ).all()
     )
-    # a representative photo per entity: the job of its most-recent linked episode
-    rep: dict[uuid.UUID, uuid.UUID] = {}
+    # every photo per entity (newest first): the first is the node's representative thumbnail,
+    # all of them are the membership spokes the canvas draws from photo to entity
+    photos: dict[uuid.UUID, list[uuid.UUID]] = {}
     rows = session.exec(
         select(EpisodeEntity.entity_id, IngestJob.id, IngestJob.created_at)
         .join(IngestJob, col(IngestJob.episode_id) == col(EpisodeEntity.episode_id))
         .order_by(col(IngestJob.created_at).desc())
     ).all()
     for entity_id, job_id, _created in rows:
-        rep.setdefault(entity_id, job_id)  # first seen = newest (ordered desc)
+        photos.setdefault(entity_id, []).append(job_id)
 
     nodes = [
         GraphNode(
             id=e.id, name=e.name, type=e.type,
             photo_count=int(counts.get(e.id, 0)),
-            representative_job_id=rep.get(e.id),
+            representative_job_id=photos.get(e.id, [None])[0],
+            photo_job_ids=photos.get(e.id, []),
         )
         for e in entities
         if counts.get(e.id, 0) > 0  # only entities that actually appear in a photo

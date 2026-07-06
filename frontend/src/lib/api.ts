@@ -128,6 +128,7 @@ export interface GraphNode {
   type: "person" | "pet" | "object";
   photo_count: number;
   representative_job_id: string | null;
+  photo_job_ids: string[]; // every photo this entity is in — the membership spokes
 }
 
 export interface GraphEdge {

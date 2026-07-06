@@ -57,6 +57,18 @@ export function Moments() {
   }, [nodes]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
+  // where each photo bubble sits (same percent space as the nodes) — so we can draw a spoke
+  // from every photo to the people/pets it contains
+  const photoPos = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    photos.forEach((job, i) => {
+      const slot = SLOTS[i % SLOTS.length]!;
+      const wrap = Math.floor(i / SLOTS.length) * 4;
+      map.set(job.id, { x: slot.x + wrap, y: slot.y + wrap });
+    });
+    return map;
+  }, [photos]);
+
   const open = photos.find((j) => j.id === openId) ?? null;
   const selected = selectedNodeId ? (nodeById.get(selectedNodeId) ?? null) : null;
   const selectedNeighbours = useMemo(() => {
@@ -138,6 +150,29 @@ export function Moments() {
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
       >
+        {/* membership spokes: every photo → the people/pets in it (so Monty is the hub of
+            all his photos, and a shared photo reaches BOTH its people) */}
+        {nodes.flatMap((node) => {
+          const np = nodePos.get(node.id);
+          if (!np) return [];
+          return node.photo_job_ids.map((jid) => {
+            const pp = photoPos.get(jid);
+            if (!pp) return null;
+            return (
+              <line
+                key={`m-${node.id}-${jid}`}
+                x1={pp.x}
+                y1={pp.y}
+                x2={np.x}
+                y2={np.y}
+                className="stroke-muted-foreground/20"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          });
+        })}
+        {/* co-occurrence bonds between entities (thicker = appear together more) */}
         {edges.map((e, i) => {
           const a = nodePos.get(e.src);
           const b = nodePos.get(e.dst);
