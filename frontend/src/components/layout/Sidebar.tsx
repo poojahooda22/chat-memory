@@ -80,12 +80,13 @@ export function Sidebar() {
         <div className="text-muted-foreground flex items-center gap-2 px-3 py-1.5 text-xs">
           <History className="size-3.5" /> History
         </div>
-        {conversations.length === 0 && (
+        {/* a conversation only appears once it has messages — an empty new chat isn't history */}
+        {conversations.every((c) => c.turns.length === 0) && (
           <div className="text-muted-foreground px-3 py-1 text-xs">No conversations yet.</div>
         )}
 
         <ul className="space-y-0.5">
-          {conversations.map((c) => {
+          {conversations.filter((c) => c.turns.length > 0).map((c) => {
             const isActive = c.id === activeId && location.pathname === "/";
 
             if (renamingId === c.id) {
