@@ -56,6 +56,21 @@ uv run uvicorn app.main:app --reload --port 8001
 Open http://localhost:8001/docs for the interactive API explorer,
 or http://localhost:8001/health for the heartbeat.
 
+## Run the frontend (the "bubbles" dashboard)
+
+Requires [Bun](https://bun.sh/). React + Tailwind v4 + shadcn UI, styled to match the
+Perplexity webapp. Talks to the backend above.
+
+```sh
+cd frontend
+bun install
+bun --hot src/index.ts          # serves the dashboard at http://localhost:3100
+```
+
+The frontend calls the backend at `http://localhost:8005/api/v1` by default. If your backend
+runs on another port, set it: `BUN_PUBLIC_BACKEND_URL=http://localhost:<port>/api/v1 bun --hot src/index.ts`.
+(Backend CORS is open in dev; restrict `cors_origins` before deploying.)
+
 Run the tests:
 
 ```sh

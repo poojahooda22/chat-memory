@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     embedding_model: str = "openai/text-embedding-3-small"
     embedding_dim: int = 1536
 
+    # CORS: which frontend origins may call this API. "*" is fine while there's no auth/cookies;
+    # restrict to the deployed frontend URL before going public.
+    cors_origins: list[str] = ["*"]
+
 
 @lru_cache
 def get_settings() -> Settings:
