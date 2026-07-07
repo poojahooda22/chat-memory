@@ -23,10 +23,10 @@ import {
   retryUpload,
   unlabelEntity,
   uploadImages,
-  uploadImageUrl,
   type EntityChip,
   type IngestJob,
 } from "@/lib/api";
+import { AuthedImage } from "@/components/AuthedImage";
 import { cn } from "@/lib/utils";
 
 const STATUS: Record<IngestJob["status"], { icon: typeof Clock3; label: string; cls: string }> = {
@@ -270,11 +270,10 @@ export function Sources() {
             const Icon = s.icon;
             return (
               <div key={job.id} className="bg-card flex items-start gap-3 rounded-xl border p-3">
-                <img
-                  src={uploadImageUrl(job.id)}
+                <AuthedImage
+                  jobId={job.id}
                   alt={job.filename}
                   className="size-14 shrink-0 rounded-lg object-cover"
-                  loading="lazy"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="group/name flex items-center gap-2 text-sm">

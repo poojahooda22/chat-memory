@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { CalendarDays, Orbit, PawPrint, User, X } from "lucide-react";
 
-import { getGraph, listUploads, uploadImageUrl, type IngestJob } from "@/lib/api";
+import { getGraph, listUploads, type IngestJob } from "@/lib/api";
+import { AuthedImage } from "@/components/AuthedImage";
 import { cn } from "@/lib/utils";
 
 /** Preset bubble slots (percent + size) so a handful of photos scatter pleasantly. */
@@ -134,12 +135,7 @@ export function Moments() {
             whileHover={{ scale: 1.06, opacity: 1 }}
             title={job.caption ?? job.filename}
           >
-            <img
-              src={uploadImageUrl(job.id)}
-              alt={job.filename}
-              className="size-full object-cover"
-              loading="lazy"
-            />
+            <AuthedImage jobId={job.id} alt={job.filename} className="size-full object-cover" />
           </motion.button>
         );
       })}
@@ -216,8 +212,8 @@ export function Moments() {
             whileHover={{ scale: 1.08 }}
           >
             {node.representative_job_id ? (
-              <img
-                src={uploadImageUrl(node.representative_job_id)}
+              <AuthedImage
+                jobId={node.representative_job_id}
                 alt={node.name}
                 className="size-full rounded-full object-cover"
               />
@@ -300,8 +296,8 @@ export function Moments() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="relative">
-                <img
-                  src={uploadImageUrl(open.id)}
+                <AuthedImage
+                  jobId={open.id}
                   alt={open.filename}
                   className="max-h-80 w-full object-cover"
                 />

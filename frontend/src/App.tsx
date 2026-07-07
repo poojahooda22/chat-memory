@@ -5,9 +5,11 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import { ConversationsProvider } from "@/lib/conversations";
 import { queryClient } from "@/lib/query";
 import { Home } from "@/pages/Home";
+import { Login } from "@/pages/Login";
 import { Memory } from "@/pages/Memory";
 import { Moments } from "@/pages/Moments";
 import { Sources } from "@/pages/Sources";
@@ -33,15 +35,33 @@ function Shell() {
   );
 }
 
+/** The gate: show the login page until there's a session; the app only mounts when signed in. */
+function Guarded() {
+  const { session, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="bg-background text-muted-foreground flex min-h-screen items-center justify-center text-sm">
+        …
+      </div>
+    );
+  }
+  if (!session) return <Login />;
+  return (
+    <ConversationsProvider>
+      <BrowserRouter>
+        <Shell />
+      </BrowserRouter>
+    </ConversationsProvider>
+  );
+}
+
 export function App() {
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <ConversationsProvider>
-          <BrowserRouter>
-            <Shell />
-          </BrowserRouter>
-        </ConversationsProvider>
+        <AuthProvider>
+          <Guarded />
+        </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>
   );

@@ -3,5 +3,4 @@
 export const BACKEND_URL =
   process.env.BUN_PUBLIC_BACKEND_URL || "http://localhost:8005/api/v1";
 
-// Single-user for now (no auth yet). Phase 7 will make this real per-user.
-export const USER_ID = "pooja";
+// user identity now comes from the signed-in Supabase session (see lib/auth), never a constant

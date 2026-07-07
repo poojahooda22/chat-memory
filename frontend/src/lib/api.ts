@@ -1,9 +1,19 @@
-/** Typed client for the chat-memory backend (the four Phase 1/2 endpoints). */
+/** Typed client for the chat-memory backend. Every request carries the Supabase access token;
+ * the backend derives the user from it (the client never sends its own user_id). */
 import axios from "axios";
 
-import { BACKEND_URL, USER_ID } from "./config";
+import { BACKEND_URL } from "./config";
+import { supabase } from "./supabase";
 
 const http = axios.create({ baseURL: BACKEND_URL });
+
+// attach the current session's JWT to every request
+http.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
 
 export interface Memory {
   id: string;
@@ -39,7 +49,6 @@ export async function sendChat(
   conversationId: string,
 ): Promise<ChatResponse> {
   const { data } = await http.post<ChatResponse>("/chat", {
-    user_id: USER_ID,
     conversation_id: conversationId,
     message,
   });
@@ -47,7 +56,7 @@ export async function sendChat(
 }
 
 export async function listMemories(): Promise<Memory[]> {
-  const { data } = await http.get<Memory[]>("/memories", { params: { user_id: USER_ID } });
+  const { data } = await http.get<Memory[]>("/memories");
   return data;
 }
 
@@ -94,13 +103,12 @@ export interface IngestJob {
 export async function uploadImages(files: File[]): Promise<IngestJob[]> {
   const form = new FormData();
   for (const file of files) form.append("files", file);
-  form.append("user_id", USER_ID);
   const { data } = await http.post<IngestJob[]>("/uploads", form);
   return data;
 }
 
 export async function listUploads(): Promise<IngestJob[]> {
-  const { data } = await http.get<IngestJob[]>("/uploads", { params: { user_id: USER_ID } });
+  const { data } = await http.get<IngestJob[]>("/uploads");
   return data;
 }
 
@@ -117,8 +125,11 @@ export async function deleteUpload(jobId: string): Promise<void> {
   await http.delete(`/uploads/${jobId}`);
 }
 
-export function uploadImageUrl(jobId: string): string {
-  return `${BACKEND_URL}/uploads/${jobId}/image`;
+/** Protected image bytes → an object URL (the token can't ride on a plain <img src>). Callers
+ * should revoke the URL when done; the AuthedImage component handles that. */
+export async function fetchImageBlobUrl(jobId: string): Promise<string> {
+  const { data } = await http.get(`/uploads/${jobId}/image`, { responseType: "blob" });
+  return URL.createObjectURL(data as Blob);
 }
 
 // ── the relationship graph ───────────────────────────────────────────────────
@@ -146,7 +157,7 @@ export interface GraphData {
 }
 
 export async function getGraph(): Promise<GraphData> {
-  const { data } = await http.get<GraphData>("/graph", { params: { user_id: USER_ID } });
+  const { data } = await http.get<GraphData>("/graph");
   return data;
 }
 

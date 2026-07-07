@@ -3,6 +3,7 @@ import {
   BrainCircuit,
   Database,
   History,
+  LogOut,
   MoreHorizontal,
   Orbit,
   PanelLeft,
@@ -19,8 +20,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/lib/auth";
 import { useConversations } from "@/lib/conversations";
-import { USER_ID } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
 // "Chat" is not a nav item — the New chat button and the History rows already go to the
@@ -35,6 +36,7 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { conversations, activeId, newChat, selectChat, renameChat, deleteChat } = useConversations();
+  const { user, signOut } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -212,9 +214,22 @@ export function Sidebar() {
       <div className={cn("border-t py-3", collapsed ? "px-0" : "px-4")}>
         <div className={cn("flex items-center gap-2", collapsed && "justify-center")}>
           <div className="bg-sidebar-accent text-sidebar-accent-foreground flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold uppercase">
-            {USER_ID.charAt(0)}
+            {(user?.email ?? "?").charAt(0)}
           </div>
-          {!collapsed && <span className="text-sm font-medium capitalize">{USER_ID}</span>}
+          {!collapsed && (
+            <>
+              <span className="flex-1 truncate text-sm font-medium" title={user?.email ?? ""}>
+                {user?.email ?? "account"}
+              </span>
+              <button
+                onClick={() => signOut()}
+                title="Sign out"
+                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground rounded-md p-1 transition-colors"
+              >
+                <LogOut className="size-4" />
+              </button>
+            </>
+          )}
         </div>
       </div>
     </aside>
