@@ -16,6 +16,7 @@ interface AuthValue {
     password: string,
   ) => Promise<{ error: string | null; needsConfirm: boolean }>;
   signInWithGoogle: () => Promise<void>;
+  signInWithGitHub: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -51,6 +52,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signInWithGoogle: async () => {
       await supabase.auth.signInWithOAuth({
         provider: "google",
+        options: { redirectTo: window.location.origin },
+      });
+    },
+    signInWithGitHub: async () => {
+      await supabase.auth.signInWithOAuth({
+        provider: "github",
         options: { redirectTo: window.location.origin },
       });
     },

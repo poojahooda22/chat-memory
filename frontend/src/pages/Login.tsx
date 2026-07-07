@@ -3,9 +3,18 @@ import { BrainCircuit } from "lucide-react";
 
 import { useAuth } from "@/lib/auth";
 
+/** GitHub mark as inline SVG — lucide has been dropping brand icons, so don't depend on one. */
+function GitHubIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.8c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.7.4-1.3.7-1.6-2.5-.3-5.2-1.3-5.2-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17 4.3 18 4.6 18 4.6c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5z" />
+    </svg>
+  );
+}
+
 /** The front door — sign in or create an account. Everything behind it is per-user private. */
 export function Login() {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp, signInWithGoogle, signInWithGitHub } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -78,6 +87,13 @@ export function Login() {
             className="border-input hover:bg-secondary w-full rounded-lg border py-2 text-sm font-medium transition-colors"
           >
             Continue with Google
+          </button>
+          <button
+            type="button"
+            onClick={() => signInWithGitHub()}
+            className="border-input hover:bg-secondary flex w-full items-center justify-center gap-2 rounded-lg border py-2 text-sm font-medium transition-colors"
+          >
+            <GitHubIcon className="size-4" /> Continue with GitHub
           </button>
         </form>
 
