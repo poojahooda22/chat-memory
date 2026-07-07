@@ -1,8 +1,10 @@
 /** Client-side conversation store: the chat turns + the History list in the sidebar.
  * Persisted to localStorage so refreshing keeps your conversations. (The backend keeps the
  * durable memory; this just tracks the chat threads the UI shows.) */
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+
+import { useAuth } from "./auth";
 
 export interface Turn {
   role: "user" | "assistant";
@@ -27,37 +29,54 @@ interface Store {
   deleteChat: (id: string) => void;
 }
 
-const STORAGE_KEY = "chat-memory:conversations";
+// History is per-user: the localStorage key includes the signed-in user's id, so two accounts
+// in the same browser never see each other's chat threads (the durable memory is already
+// per-user on the backend; this scopes the client-side thread list to match).
+const storageKeyFor = (userId: string) => `chat-memory:conversations:${userId}`;
 const ConversationsContext = createContext<Store | null>(null);
 
 function newId(): string {
   return `conv-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 }
 
-function load(): Conversation[] {
+function loadFor(key: string): Conversation[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as Conversation[];
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Conversation[];
+      if (parsed.length) return parsed;
+    }
   } catch {
     /* ignore */
   }
-  return [];
+  return [{ id: newId(), title: "New chat", turns: [] }];
 }
 
 export function ConversationsProvider({ children }: { children: ReactNode }) {
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    const loaded = load();
-    return loaded.length ? loaded : [{ id: newId(), title: "New chat", turns: [] }];
-  });
+  const { user } = useAuth();
+  const storageKey = storageKeyFor(user?.id ?? "anon");
+
+  const [conversations, setConversations] = useState<Conversation[]>(() => loadFor(storageKey));
   const [activeId, setActiveId] = useState<string>(() => conversations[0]!.id);
+
+  // when the signed-in user changes, swap to that user's own conversation list
+  const currentKey = useRef(storageKey);
+  useEffect(() => {
+    if (currentKey.current !== storageKey) {
+      currentKey.current = storageKey;
+      const next = loadFor(storageKey);
+      setConversations(next);
+      setActiveId(next[0]!.id);
+    }
+  }, [storageKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+      localStorage.setItem(storageKey, JSON.stringify(conversations));
     } catch {
       /* ignore */
     }
-  }, [conversations]);
+  }, [conversations, storageKey]);
 
   const newChat = useCallback(() => {
     const id = newId();
