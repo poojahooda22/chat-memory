@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
+from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_session
 from app.memory.pipeline import record_exchange, run_summary_refresh
@@ -20,7 +21,7 @@ class Message(BaseModel):
 
 
 class RecordRequest(BaseModel):
-    user_id: str = "default"
+    # no user_id here — it's derived from the auth token, never sent by the client
     conversation_id: str | None = None
     messages: list[Message]
 
@@ -58,13 +59,14 @@ def record_memories(
     req: RecordRequest,
     request: Request,
     background: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> RecordResponse:
     # sync pipeline (blocking DB + LLM I/O) in a plain def -> FastAPI runs it in the threadpool
     settings = get_settings()
     result = record_exchange(
         session, request.app.state.llm, settings,
-        user_id=req.user_id,
+        user_id=user_id,
         conversation_id=req.conversation_id,
         messages=[m.model_dump() for m in req.messages],
     )
@@ -89,7 +91,7 @@ def record_memories(
 # ── read path ────────────────────────────────────────────────────────────────
 @router.get("/memories", operation_id="list_memories", response_model=list[MemoryRead])
 def list_memories(
-    user_id: str = "default", session: Session = Depends(get_session)
+    user_id: str = Depends(get_current_user), session: Session = Depends(get_session)
 ) -> list[Memory]:
     statement = (
         select(Memory)
@@ -105,8 +107,13 @@ def list_memories(
     response_model=list[HistoryRead],
 )
 def memory_history(
-    memory_id: uuid.UUID, session: Session = Depends(get_session)
+    memory_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> list[MemoryHistory]:
+    memory = session.get(Memory, memory_id)
+    if memory is None or memory.user_id != user_id:  # right user, right row
+        raise HTTPException(status_code=404, detail="Memory not found")
     statement = (
         select(MemoryHistory)
         .where(MemoryHistory.memory_id == memory_id)
@@ -117,10 +124,12 @@ def memory_history(
 
 @router.delete("/memories/{memory_id}", operation_id="delete_memory")
 def delete_memory(
-    memory_id: uuid.UUID, session: Session = Depends(get_session)
+    memory_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> dict[str, str]:
     memory = session.get(Memory, memory_id)
-    if memory is None or memory.is_deleted:
+    if memory is None or memory.is_deleted or memory.user_id != user_id:
         raise HTTPException(status_code=404, detail="Memory not found")
     memory.is_deleted = True
     session.add(memory)

@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # where uploaded originals live (gitignored); R2/object storage is the later fork
     uploads_dir: str = "uploads"
 
+    # Supabase Auth: the frontend logs in with Supabase and sends its access-token JWT; the
+    # backend verifies it against Supabase's PUBLIC keys (JWKS, asymmetric ES256) and reads the
+    # user id from the 'sub' claim — the client never supplies its own user_id (non-negotiable #6).
+    supabase_url: str = ""  # e.g. https://abcdefgh.supabase.co — set in the backend host env
+
     # reverse-geocoding (lat/lon -> place name) runs in the WORKER only, on photos that carry
     # GPS. Nominatim is fine for dev/low volume (single cached lookups); production bulk needs a
     # self-hosted instance or a paid geocoder — its usage policy forbids systematic querying.

@@ -16,7 +16,6 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
-    Form,
     HTTPException,
     Request,
     UploadFile,
@@ -25,6 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 
+from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_session
 from app.ingest.exif import classify_kind, parse_exif
@@ -32,6 +32,14 @@ from app.ingest.forget import forget_job
 from app.ingest.pipeline import run_ingest_job
 from app.memory.entities import suggest_entity
 from app.models import Entity, Episode, EpisodeEntity, IngestJob
+
+
+def _owned_job(session: Session, job_id: uuid.UUID, user_id: str) -> IngestJob:
+    """Fetch a job that belongs to this user, or 404 — right user, right row."""
+    job = session.get(IngestJob, job_id)
+    if job is None or job.user_id != user_id:
+        raise HTTPException(404, "Upload not found")
+    return job
 
 router = APIRouter(tags=["uploads"])
 
@@ -96,7 +104,7 @@ def upload_images(
     request: Request,
     background: BackgroundTasks,
     files: list[UploadFile] = File(...),
-    user_id: str = Form("default"),
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> list[IngestJobRead]:
     settings = get_settings()
@@ -142,7 +150,7 @@ def upload_images(
 @router.get("/uploads", operation_id="list_uploads", response_model=list[IngestJobRead])
 def list_uploads(
     request: Request,
-    user_id: str = "default",
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> list[IngestJobRead]:
     stmt = (
@@ -222,9 +230,13 @@ def list_uploads(
 
 
 @router.get("/uploads/{job_id}/image", operation_id="upload_image_file")
-def upload_image_file(job_id: uuid.UUID, session: Session = Depends(get_session)) -> FileResponse:
-    job = session.get(IngestJob, job_id)
-    if job is None or not job.image_path or not Path(job.image_path).is_file():
+def upload_image_file(
+    job_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    job = _owned_job(session, job_id, user_id)
+    if not job.image_path or not Path(job.image_path).is_file():
         raise HTTPException(404, "Image not found")
     return FileResponse(job.image_path, media_type=job.content_type)
 
@@ -235,12 +247,13 @@ class RenameRequest(BaseModel):
 
 @router.patch("/uploads/{job_id}", operation_id="rename_upload", response_model=IngestJobRead)
 def rename_upload(
-    job_id: uuid.UUID, req: RenameRequest, session: Session = Depends(get_session)
+    job_id: uuid.UUID,
+    req: RenameRequest,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> IngestJobRead:
     """Give the upload a human name — Drive/Photos downloads arrive as IMG20230522… noise."""
-    job = session.get(IngestJob, job_id)
-    if job is None:
-        raise HTTPException(404, "Upload not found")
+    job = _owned_job(session, job_id, user_id)
     name = req.filename.strip()
     if not name:
         raise HTTPException(422, "filename must not be empty")
@@ -251,11 +264,15 @@ def rename_upload(
 
 
 @router.delete("/uploads/{job_id}", operation_id="delete_upload")
-def delete_upload(job_id: uuid.UUID, session: Session = Depends(get_session)) -> dict[str, str]:
+def delete_upload(
+    job_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
     """Forget this photo: file + episode + links go; memories lose this receipt (or are
     forgotten when it was their only source). Entities survive."""
-    if not forget_job(session, job_id=job_id):
-        raise HTTPException(404, "Upload not found")
+    _owned_job(session, job_id, user_id)  # 404 unless it's this user's photo
+    forget_job(session, job_id=job_id)
     session.commit()
     return {"status": "deleted", "job_id": str(job_id)}
 
@@ -268,12 +285,11 @@ def retry_upload(
     job_id: uuid.UUID,
     request: Request,
     background: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> IngestJobRead:
     """Re-kick a failed job, or a queued one orphaned by a server restart."""
-    job = session.get(IngestJob, job_id)
-    if job is None:
-        raise HTTPException(404, "Upload not found")
+    job = _owned_job(session, job_id, user_id)
     if job.status not in ("queued", "failed"):
         raise HTTPException(409, f"Job is {job.status}; only queued/failed jobs can be retried")
     job.status = "queued"

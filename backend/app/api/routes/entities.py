@@ -8,11 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, col, select
 
+from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_session
 from app.memory.entities import LabelError, apply_label
 from app.memory.graph import rebuild_edges_for_entity
-from app.models import Entity, EpisodeEntity
+from app.models import Entity, Episode, EpisodeEntity
 
 router = APIRouter(tags=["entities"])
 
@@ -49,8 +50,12 @@ def label_entity(
     episode_id: uuid.UUID,
     req: LabelRequest,
     request: Request,
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> LabelResponse:
+    episode = session.get(Episode, episode_id)
+    if episode is None or episode.user_id != user_id:  # right user, right row
+        raise HTTPException(404, "Episode not found")
     try:
         result = apply_label(
             session, request.app.state.llm, get_settings(),
@@ -71,10 +76,16 @@ def label_entity(
     "/episodes/{episode_id}/label/{entity_index}", operation_id="unlabel_entity"
 )
 def unlabel_entity(
-    episode_id: uuid.UUID, entity_index: int, session: Session = Depends(get_session)
+    episode_id: uuid.UUID,
+    entity_index: int,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> dict[str, str]:
     """Detach a label from this photo (the undo for a wrong auto-recognition). The entity
     and any semantic memories stay — only the photo link is removed."""
+    episode = session.get(Episode, episode_id)
+    if episode is None or episode.user_id != user_id:
+        raise HTTPException(404, "No label on that slot")
     link = session.exec(
         select(EpisodeEntity).where(
             EpisodeEntity.episode_id == episode_id,
@@ -95,7 +106,7 @@ def unlabel_entity(
 
 @router.get("/entities", operation_id="list_entities", response_model=list[EntityRead])
 def list_entities(
-    user_id: str = "default", session: Session = Depends(get_session)
+    user_id: str = Depends(get_current_user), session: Session = Depends(get_session)
 ) -> list[EntityRead]:
     rows = session.exec(
         select(Entity)

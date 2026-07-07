@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session
 
+from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_session
 from app.memory.chat import answer
@@ -11,7 +12,7 @@ router = APIRouter(tags=["chat"])
 
 
 class ChatRequest(BaseModel):
-    user_id: str = "default"
+    # user_id is derived from the auth token, never sent by the client
     conversation_id: str | None = None
     message: str
 
@@ -34,13 +35,14 @@ def chat(
     req: ChatRequest,
     request: Request,
     background: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> ChatResponse:
     # sync (blocking DB + LLM) in a plain def -> FastAPI runs it in the threadpool
     settings = get_settings()
     result = answer(
         session, request.app.state.llm, settings,
-        user_id=req.user_id, conversation_id=req.conversation_id, message=req.message,
+        user_id=user_id, conversation_id=req.conversation_id, message=req.message,
     )
     session.commit()
 

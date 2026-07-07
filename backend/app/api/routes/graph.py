@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, col, func, select
 
+from app.auth import get_current_user
 from app.db import get_session
 from app.memory.graph import MIN_CONFIDENT_COOCCUR, neighbors
 from app.models import Entity, EpisodeEntity, IngestJob, Relationship
@@ -37,7 +38,9 @@ class GraphResponse(BaseModel):
 
 
 @router.get("/graph", operation_id="get_graph", response_model=GraphResponse)
-def get_graph(user_id: str = "default", session: Session = Depends(get_session)) -> GraphResponse:
+def get_graph(
+    user_id: str = Depends(get_current_user), session: Session = Depends(get_session)
+) -> GraphResponse:
     entities = list(session.exec(select(Entity).where(Entity.user_id == user_id)).all())
     if not entities:
         return GraphResponse(nodes=[], edges=[])
@@ -99,7 +102,9 @@ class NeighbourRead(BaseModel):
     response_model=list[NeighbourRead],
 )
 def entity_neighbors(
-    entity_id: uuid.UUID, user_id: str = "default", session: Session = Depends(get_session)
+    entity_id: uuid.UUID,
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> list[NeighbourRead]:
     return [
         NeighbourRead(
