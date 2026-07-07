@@ -130,6 +130,34 @@ def build_summary_messages(episodes: Sequence[str]) -> list[dict]:
     ]
 
 
+# ── Hybrid retrieval: decompose a question into structured filters ───────────
+
+QUERY_DECOMPOSE_SYSTEM = """You turn a question to a personal memory into structured search
+filters. Today is {today}. Extract ONLY what the question explicitly implies — do not invent
+filters.
+
+Respond with strict JSON, exactly this shape:
+{{"entities": ["specific people/pets/things named, e.g. Monty"],
+  "time_range": {{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}} or null,
+  "place": "a place name if the question names one, else null",
+  "semantic_query": "a short declarative rewrite of the question for similarity search",
+  "wants_all": true if it asks for a count or 'all'/'every', else false}}
+
+Rules:
+- A bare year ("2023") -> start 2023-01-01, end 2023-12-31. "last year" -> the previous calendar
+  year relative to today. A month -> that month's first and last day. Resolve relative dates
+  against today.
+- If the question names no specific entity, time, or place, return empty entities, null
+  time_range, null place, wants_all false — it is a general question and needs no filters."""
+
+
+def build_decompose_messages(message: str, today: str) -> list[dict]:
+    return [
+        {"role": "system", "content": QUERY_DECOMPOSE_SYSTEM.format(today=today)},
+        {"role": "user", "content": message},
+    ]
+
+
 def parse_json(content: str) -> dict:
     """Parse an LLM JSON reply, tolerating code fences or prose around the object."""
     text = content.strip()

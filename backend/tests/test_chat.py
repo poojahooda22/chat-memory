@@ -15,6 +15,12 @@ from tests.conftest import FakeLLM, fake_embedding
 
 SETTINGS = get_settings()
 
+# answer() now decomposes the question first (hybrid retrieval); a general question yields no
+# filters and falls back to similarity, so every chat script starts with this decompose reply.
+NO_FILTER = json.dumps({
+    "entities": [], "time_range": None, "place": None, "semantic_query": "", "wants_all": False,
+})
+
 
 def _user() -> str:
     return f"test-{uuid.uuid4()}"
@@ -38,8 +44,8 @@ def test_chat_retrieves_memory_and_answers_from_it(db_session):
     db_session.add(seeded)
     db_session.flush()
 
-    # reply, then extraction returns no new fact
-    llm = FakeLLM(["Your name is Pooja!", json.dumps({"facts": []})])
+    # decompose (no filters), reply, then extraction returns no new fact
+    llm = FakeLLM([NO_FILTER, "Your name is Pooja!", json.dumps({"facts": []})])
     result = answer(
         db_session, llm, SETTINGS,
         user_id=user, conversation_id="c1", message="what is my name?",
@@ -68,7 +74,7 @@ def test_chat_retrieves_photo_episodes(db_session):
     db_session.add(photo)
     db_session.flush()
 
-    llm = FakeLLM(["Your photos show your fluffy dog!", json.dumps({"facts": []})])
+    llm = FakeLLM([NO_FILTER, "Your photos show your fluffy dog!", json.dumps({"facts": []})])
     result = answer(
         db_session, llm, SETTINGS,
         user_id=user, conversation_id="c1", message="what do my photos show about my dog?",
@@ -81,8 +87,9 @@ def test_chat_retrieves_photo_episodes(db_session):
 
 def test_chat_records_a_new_fact_stated_mid_conversation(db_session):
     user = _user()
-    # reply, extraction finds a fact, decision ADDs it
+    # decompose (no filters), reply, extraction finds a fact, decision ADDs it
     llm = FakeLLM([
+        NO_FILTER,
         "Nice to meet you, Alex!",
         json.dumps({"facts": ["Name is Alex"]}),
         json.dumps({"event": "ADD", "target_index": None, "text": "Name is Alex"}),

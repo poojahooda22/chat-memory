@@ -1,8 +1,9 @@
 """Phase 2: the remembering chat.
 
-answer() closes the loop — it READS memory (retrieve relevant facts to answer well) and WRITES
-memory (record the exchange so the conversation keeps teaching the system). Both halves reuse
-the Phase-1 pipeline: search_memories() to retrieve, record_exchange() to store.
+answer() closes the loop — it READS memory (hybrid retrieval: decompose the question, then
+filter photos by entity/time/place or fall back to similarity) and WRITES memory (record the
+exchange so the conversation keeps teaching the system). Retrieval lives in retrieval.py; the
+write path is record_exchange() from the Phase-1 pipeline.
 """
 
 from dataclasses import dataclass
@@ -10,19 +11,12 @@ from dataclasses import dataclass
 from sqlmodel import Session, col, select
 
 from app.config import Settings
-from app.memory.pipeline import (
-    MemoryOperation,
-    record_exchange,
-    search_image_episodes,
-    search_memories,
-)
+from app.memory.pipeline import MemoryOperation, record_exchange
 from app.memory.prompts import build_chat_messages
+from app.memory.retrieval import retrieve
 from app.models import Episode
 
-RETRIEVE_TOP_K = 5   # memories injected into the chat prompt
-PHOTO_TOP_K = 3      # image-derived episodes injected alongside them
-HISTORY_TURNS = 6    # recent turns kept for short-term continuity
-
+HISTORY_TURNS = 6  # recent turns kept for short-term continuity
 
 @dataclass
 class ChatResult:
@@ -63,15 +57,11 @@ def answer(
     conversation_id: str | None,
     message: str,
 ) -> ChatResult:
-    # 1. RETRIEVE — both stores: distilled facts AND the photo episodes themselves
-    memories = search_memories(
-        session, client, settings, user_id=user_id, query=message, limit=RETRIEVE_TOP_K
-    )
-    memory_texts = [m.content for m in memories]
-    photo_episodes = search_image_episodes(
-        session, client, settings, user_id=user_id, query=message, limit=PHOTO_TOP_K
-    )
-    photo_texts = [_photo_line(e) for e in photo_episodes]
+    # 1. RETRIEVE — hybrid: decompose the question, filter photos by entity/time/place when it
+    #    names them (exact, all matches), else fall back to similarity; facts by similarity
+    result = retrieve(session, client, settings, user_id=user_id, message=message)
+    memory_texts = [m.content for m in result.facts]
+    photo_texts = [_photo_line(e) for e in result.photos]
 
     # 2. AUGMENT — inject memories + photo memories + recent turns + the new message
     history = _recent_turns(session, user_id=user_id, conversation_id=conversation_id)
