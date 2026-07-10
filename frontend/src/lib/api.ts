@@ -19,6 +19,10 @@ export interface Memory {
   id: string;
   user_id: string;
   content: string;
+  /** where the fact came from: chat/mcp = you said it, photo = seen, quiz = onboarding, inferred = read from behavior */
+  source: "chat" | "photo" | "quiz" | "import" | "inferred" | "mcp";
+  /** 0..1 trust: directly stated = 1.0, inferred = 0.7, quiz seed = 0.6 */
+  confidence: number;
   source_episode_ids: string[];
   created_at: string;
   updated_at: string;
@@ -31,28 +35,34 @@ export interface HistoryEntry {
   created_at: string;
 }
 
-export interface MemoryOperation {
-  event: string;
-  memory_id: string | null;
-  text: string;
-}
-
-export interface ChatResponse {
-  reply: string;
-  memories_used: string[];
-  photos_used: string[];
-  operations: MemoryOperation[];
-}
-
-export async function sendChat(
+/** Stream the chat reply token by token. `onToken` fires for each text chunk as it arrives, and
+ * the promise resolves when the stream ends. Uses fetch (not axios) so we can read the response
+ * body as a stream, and attaches the Supabase JWT the same way the axios client does. */
+export async function streamChat(
   message: string,
   conversationId: string,
-): Promise<ChatResponse> {
-  const { data } = await http.post<ChatResponse>("/chat", {
-    conversation_id: conversationId,
-    message,
+  onToken: (chunk: string) => void,
+): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const res = await fetch(`${BACKEND_URL}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ conversation_id: conversationId, message }),
   });
-  return data;
+  if (!res.ok || !res.body) throw new Error(`chat failed: ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    if (chunk) onToken(chunk);
+  }
 }
 
 export async function listMemories(): Promise<Memory[]> {
@@ -104,6 +114,35 @@ export async function uploadImages(files: File[]): Promise<IngestJob[]> {
   const form = new FormData();
   for (const file of files) form.append("files", file);
   const { data } = await http.post<IngestJob[]>("/uploads", form);
+  return data;
+}
+
+/** Import a Google Takeout .zip — each photo's JSON sidecar restores the GPS + capture time
+ * Google strips on download, so photos come in WITH their locations. */
+export async function importTakeout(file: File): Promise<IngestJob[]> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await http.post<IngestJob[]>("/uploads/takeout", form);
+  return data;
+}
+
+// ── the taste-quiz (cold-start onboarding) ────────────────────────────────────
+
+export interface QuizQuestion {
+  id: string;
+  prompt: string;
+}
+
+export async function getQuiz(): Promise<QuizQuestion[]> {
+  const { data } = await http.get<QuizQuestion[]>("/quiz");
+  return data;
+}
+
+/** Submit onboarding answers — seeded into memory at low confidence, in the background. */
+export async function submitQuiz(
+  answers: { question: string; answer: string }[],
+): Promise<{ seeding: number }> {
+  const { data } = await http.post<{ seeding: number }>("/quiz", { answers });
   return data;
 }
 

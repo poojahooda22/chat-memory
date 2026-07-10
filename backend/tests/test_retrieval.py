@@ -7,8 +7,8 @@ import uuid
 from datetime import UTC, date, datetime
 
 from app.config import get_settings
-from app.memory.retrieval import decompose_query, retrieve
-from app.models import Entity, Episode, EpisodeEntity
+from app.memory.retrieval import decompose_query, recall, retrieve
+from app.models import Entity, Episode, EpisodeEntity, Memory
 from tests.conftest import FakeLLM, fake_embedding
 
 SETTINGS = get_settings()
@@ -101,3 +101,43 @@ def test_filterless_question_falls_back_to_similarity(db_session):
     result = retrieve(db_session, llm, SETTINGS, user_id=user, message="tell me about a dog")
     assert result.spec.has_filters is False
     assert len(result.photos) == 1  # found by similarity, no filter path
+
+
+def test_recall_bundle_carries_provenance_and_confidence(db_session):
+    """recall() wraps each result with its receipts: a fact keeps source/confidence/provenance,
+    a photo keeps its date + place, and the bundle carries one per-recall confidence (P2)."""
+    user = f"r-{uuid.uuid4()}"
+    mem = Memory(
+        user_id=user, content="Loves cycling", embedding=fake_embedding("Loves cycling"),
+        source_episode_ids=["ep-1"], source="chat", confidence=1.0,
+    )
+    db_session.add(mem)
+    db_session.flush()
+    _photo(db_session, user, datetime(2023, 5, 1, tzinfo=UTC), "a bike on a trail", None)
+
+    llm = FakeLLM([json.dumps({
+        "entities": [], "time_range": None, "place": None,
+        "semantic_query": "cycling", "wants_all": False,
+    })])
+    bundle = recall(db_session, llm, SETTINGS, user_id=user, message="what are my hobbies?")
+
+    assert bundle.fact_lines == ["Loves cycling"]
+    fact = bundle.facts[0]
+    assert fact.source == "chat" and fact.confidence == 1.0
+    assert fact.source_episode_ids == ["ep-1"]  # provenance travels with the fact
+    assert bundle.confidence == 1.0  # one confident fact
+    assert len(bundle.photos) == 1
+    assert bundle.photos[0].occurred_at == date(2023, 5, 1)
+    assert bundle.photo_lines[0].startswith("[captured 2023-05-01]")
+
+
+def test_recall_confidence_zero_when_no_facts(db_session):
+    """No facts recalled -> the per-recall confidence is 0 (what the proactive gate thresholds on)."""
+    user = f"r-{uuid.uuid4()}"
+    llm = FakeLLM([json.dumps({
+        "entities": [], "time_range": None, "place": None,
+        "semantic_query": "x", "wants_all": False,
+    })])
+    bundle = recall(db_session, llm, SETTINGS, user_id=user, message="do you know anything?")
+    assert bundle.facts == []
+    assert bundle.confidence == 0.0

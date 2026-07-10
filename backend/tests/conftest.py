@@ -48,7 +48,9 @@ def _concept_slot(text: str) -> int:
         return 2
     if "pooja" in t or "name" in t:
         return 3
-    return 4 + (abs(hash(t)) % 100)  # everything else scatters into its own slot
+    if "communication style" in t:
+        return 4
+    return 10 + (abs(hash(t)) % 100)  # everything else scatters into its own slot
 
 
 def _slot_vector(slot: int) -> list[float]:

@@ -158,6 +158,7 @@ def process_job(
         user_id=job.user_id,
         text=f"A {job.kind} from my life shows: {content}",
         source_ids=[str(episode.id)],
+        source="photo",
     )
 
     # visual recognition: pets the memory already knows get their label applied by the

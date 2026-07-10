@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.routes import chat, entities, graph, health, memories, uploads
+from app.api.routes import chat, entities, graph, health, memories, quiz, style, uploads
 from app.config import get_settings
 from app.db import build_engine
 from app.llm import build_llm_client
@@ -42,6 +42,8 @@ app.include_router(chat.router, prefix="/api/v1")
 app.include_router(uploads.router, prefix="/api/v1")
 app.include_router(entities.router, prefix="/api/v1")
 app.include_router(graph.router, prefix="/api/v1")
+app.include_router(quiz.router, prefix="/api/v1")
+app.include_router(style.router, prefix="/api/v1")
 
 
 def _problem(status: int, title: str, detail: str, instance: str) -> JSONResponse:

@@ -8,6 +8,7 @@ lookup only.
 
 import mimetypes
 import uuid
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from app.db import get_session
 from app.ingest.exif import classify_kind, parse_exif
 from app.ingest.forget import forget_job
 from app.ingest.pipeline import run_ingest_job
+from app.ingest.takeout import build_jobs_from_zip
 from app.memory.entities import suggest_entity
 from app.models import Entity, Episode, EpisodeEntity, IngestJob
 
@@ -137,6 +139,45 @@ def upload_images(
         job.image_path = str(path)
         session.add(job)
         jobs.append(job)
+
+    session.commit()
+    for job in jobs:
+        background.add_task(
+            run_ingest_job,
+            request.app.state.engine, request.app.state.llm, settings, job.id,
+        )
+    return [_job_out(job, caption=None) for job in jobs]
+
+
+MAX_TAKEOUT_BYTES = 500 * 1024 * 1024  # 500MB in-memory ceiling (Tier-2 = streaming extraction)
+
+
+@router.post(
+    "/uploads/takeout", operation_id="import_takeout", status_code=202,
+    response_model=list[IngestJobRead],
+)
+def import_takeout(
+    request: Request,
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[IngestJobRead]:
+    """Import a Google Takeout .zip. Each photo's JSON sidecar restores the GPS + capture time
+    Google strips on download, so photos come in WITH locations. Reuses the image-ingest worker:
+    the same queued jobs an ordinary upload produces, geocoded + distilled off the request path."""
+    settings = get_settings()
+    data = file.file.read()
+    if not data:
+        raise HTTPException(422, "The export file is empty")
+    if len(data) > MAX_TAKEOUT_BYTES:
+        raise HTTPException(413, "Export too large; choose a smaller split size in Google Takeout")
+    try:
+        jobs = build_jobs_from_zip(session, settings, user_id=user_id, zip_bytes=data)
+    except zipfile.BadZipFile:
+        raise HTTPException(415, "That doesn't look like a valid .zip export") from None
+    if not jobs:
+        raise HTTPException(422, "No photos found — expected a Google Photos Takeout .zip")
 
     session.commit()
     for job in jobs:

@@ -18,6 +18,7 @@ from sqlmodel import Session, col, func, select
 
 from app.config import Settings
 from app.memory.embeddings import embed_text
+from app.memory.lineage import predecessors_for
 from app.memory.pipeline import search_image_episodes, search_memories
 from app.memory.prompts import build_decompose_messages, parse_json
 from app.models import Entity, Episode, EpisodeEntity, Memory
@@ -45,6 +46,57 @@ class RetrievalResult:
     facts: list[Memory]
     photos: list[Episode]
     spec: QuerySpec
+
+
+@dataclass
+class RecalledFact:
+    """A distilled fact WITH its receipts — the provenance + trust the layer + proactive gate read."""
+    memory_id: str
+    content: str
+    source: str  # chat | photo | quiz | import | inferred | mcp (the P1 origin)
+    confidence: float  # 0..1 trust (the P1 score)
+    source_episode_ids: list[str]  # which episodes this fact was distilled from
+    # belief-revision lineage: was this fact a correction of an earlier one, and of what?
+    revised: bool = False  # True if this fact superseded a prior belief
+    previously: str | None = None  # the immediate prior belief's text (what it replaced)
+    # when the ENGINE recorded the correction (this live row's creation) — NOT the life-event moment
+    # the user changed their mind; there is no valid-time column, so never present it as one
+    ingested_at: datetime | None = None
+    has_older: bool = False  # the prior belief itself superseded an even older one (multi-hop)
+
+
+@dataclass
+class RecalledPhoto:
+    """A photo memory with its capture date + place (when known) and its episode id."""
+    episode_id: str
+    content: str  # the caption
+    occurred_at: date
+    place: str | None
+
+    @property
+    def line(self) -> str:
+        where = f", in {self.place}" if self.place else ""
+        return f"[captured {self.occurred_at.isoformat()}{where}] {self.content}"
+
+
+@dataclass
+class RecallBundle:
+    """The recall payload: ranked facts + photo memories, each carrying provenance, plus the
+    decomposed query and ONE per-recall confidence. The chat prompt is built from .fact_lines /
+    .photo_lines; the extra fields (source, confidence, episode ids) are what the MCP `recall`
+    tool and the proactive WHEN-gate will consume."""
+    facts: list[RecalledFact]
+    photos: list[RecalledPhoto]
+    spec: QuerySpec
+    confidence: float  # v1: mean confidence of the recalled facts, 0 when none were found
+
+    @property
+    def fact_lines(self) -> list[str]:
+        return [f.content for f in self.facts]
+
+    @property
+    def photo_lines(self) -> list[str]:
+        return [p.line for p in self.photos]
 
 
 def _chat_json(client, model: str, messages: list[dict]) -> dict:
@@ -130,13 +182,61 @@ def retrieve(
     """Decompose the question, filter the photo store exactly when it names an entity/time/place,
     else fall back to plain cosine. Facts are always searched by similarity, as before."""
     spec = decompose_query(client, settings, message)
+    # embed the raw question ONCE and reuse it for the facts search and (on the filterless path)
+    # the episode search — the same query used to be embedded twice per turn
+    query_vec = embed_text(client, settings.embedding_model, message)
     facts = search_memories(
-        session, client, settings, user_id=user_id, query=message, limit=FACT_TOP_K
+        session, client, settings, user_id=user_id, query=message, limit=FACT_TOP_K,
+        embedding=query_vec,
     )
     if spec.has_filters:
         photos = _filtered_photos(session, client, settings, user_id=user_id, spec=spec)
     else:
         photos = search_image_episodes(
-            session, client, settings, user_id=user_id, query=message, limit=3
+            session, client, settings, user_id=user_id, query=message, limit=3,
+            embedding=query_vec,
         )
     return RetrievalResult(facts=facts, photos=photos, spec=spec)
+
+
+def recall(
+    session: Session, client, settings: Settings, *, user_id: str, message: str
+) -> RecallBundle:
+    """The public read path: run hybrid retrieval, then wrap every result with its receipts.
+
+    Reshapes retrieve()'s raw ORM rows into a provenance-carrying bundle. The chat prompt uses
+    only .fact_lines / .photo_lines; the extra per-item fields (source, confidence, episode ids)
+    and the single per-recall confidence are what the MCP layer and the proactive gate read.
+    """
+    raw = retrieve(session, client, settings, user_id=user_id, message=message)
+    # one batched lineage lookup for ALL recalled facts (no per-fact N+1). ingested_at is the LIVE
+    # row's own created_at (when the engine recorded the correction), never the predecessor's birth.
+    lineage = predecessors_for(session, [m.id for m in raw.facts])
+    facts = [
+        RecalledFact(
+            memory_id=str(m.id),
+            content=m.content,
+            source=m.source,
+            confidence=m.confidence,
+            source_episode_ids=list(m.source_episode_ids),
+            revised=m.id in lineage,
+            previously=lineage[m.id].content if m.id in lineage else None,
+            ingested_at=m.created_at if m.id in lineage else None,
+            has_older=lineage[m.id].has_older if m.id in lineage else False,
+        )
+        for m in raw.facts
+    ]
+    photos = [
+        RecalledPhoto(
+            episode_id=str(e.id),
+            content=e.content,
+            occurred_at=e.occurred_at.date(),
+            place=((e.context or {}).get("place") or {}).get("name"),
+        )
+        for e in raw.photos
+    ]
+    # v1 per-recall confidence: how much we trust the FACTS we're answering from (photos are
+    # grounded episodes and carry no confidence field). 0 when no facts were found. Later this can
+    # blend recency + the number of supporting episodes.
+    confidence = sum(f.confidence for f in facts) / len(facts) if facts else 0.0
+    return RecallBundle(facts=facts, photos=photos, spec=raw.spec, confidence=confidence)

@@ -10,6 +10,11 @@
 # user-uploaded media — personal photos never reach git
 backend/uploads/
 
+# eval: the LOCOMO benchmark (CC BY-NC, study-only) + raw run outputs — the eval CODE is
+# tracked, but the dataset and the generated result files are not
+backend/eval/data/
+backend/eval/results/
+
 # python
 __pycache__/
 *.py[cod]

@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   CheckCircle2,
   Clock3,
   ImagePlus,
@@ -17,6 +18,7 @@ import {
 
 import {
   deleteUpload,
+  importTakeout,
   labelEntity,
   listUploads,
   renameUpload,
@@ -160,6 +162,7 @@ function EntityChips({ job }: { job: IngestJob }) {
 export function Sources() {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
+  const takeoutRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
   const uploads = useQuery({
@@ -174,6 +177,10 @@ export function Sources() {
 
   const upload = useMutation({
     mutationFn: uploadImages,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
+  });
+  const takeout = useMutation({
+    mutationFn: importTakeout,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["uploads"] }),
   });
   const retry = useMutation({
@@ -262,6 +269,43 @@ export function Sources() {
             Upload failed: {(upload.error as Error).message}
           </div>
         )}
+
+        {/* secondary source: a Google Takeout export — restores the GPS Google strips on download */}
+        <div className="mt-3 text-center">
+          <button
+            type="button"
+            onClick={() => takeoutRef.current?.click()}
+            disabled={takeout.isPending}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs underline-offset-2 hover:underline disabled:opacity-60"
+          >
+            <Archive className="size-3.5" />
+            {takeout.isPending
+              ? "Importing your Takeout…"
+              : "or import a Google Takeout export (.zip) — brings your Google Photos in with locations"}
+          </button>
+          <input
+            ref={takeoutRef}
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) takeout.mutate(f);
+              e.target.value = ""; // same file can be re-picked
+            }}
+          />
+          {takeout.isError && (
+            <div className="text-destructive mt-2 text-xs">
+              Import failed: {(takeout.error as Error).message}
+            </div>
+          )}
+          {takeout.isSuccess && (
+            <div className="text-muted-foreground mt-2 text-xs">
+              Importing {takeout.data.length} photo{takeout.data.length === 1 ? "" : "s"} — they’ll
+              appear below as they process.
+            </div>
+          )}
+        </div>
 
         {/* ingest status list */}
         <div className="mt-8 space-y-2">

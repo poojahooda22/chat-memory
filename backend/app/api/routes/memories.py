@@ -8,6 +8,7 @@ from sqlmodel import Session, col, select
 from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_session
+from app.memory.lineage import _belief_chain_ids
 from app.memory.pipeline import record_exchange, run_summary_refresh
 from app.models import Memory, MemoryHistory
 
@@ -41,6 +42,8 @@ class MemoryRead(BaseModel):
     id: uuid.UUID
     user_id: str
     content: str
+    source: str  # chat | photo | quiz | import | inferred | mcp — where the fact came from
+    confidence: float  # 0..1 trust: directly stated = 1.0, inferred = 0.7, quiz seed = 0.6
     source_episode_ids: list[str]
     created_at: datetime
     updated_at: datetime
@@ -95,7 +98,11 @@ def list_memories(
 ) -> list[Memory]:
     statement = (
         select(Memory)
-        .where(Memory.user_id == user_id, Memory.is_deleted == False)  # noqa: E712
+        .where(
+            Memory.user_id == user_id,
+            Memory.is_deleted == False,  # noqa: E712
+            Memory.is_superseded == False,  # noqa: E712  — retired beliefs stay out of the live list
+        )
         .order_by(col(Memory.updated_at).desc())
     )
     return list(session.exec(statement).all())
@@ -114,9 +121,11 @@ def memory_history(
     memory = session.get(Memory, memory_id)
     if memory is None or memory.user_id != user_id:  # right user, right row
         raise HTTPException(status_code=404, detail="Memory not found")
+    # the full lineage, oldest event first — a correction's history survives the supersede
+    chain = _belief_chain_ids(session, memory)
     statement = (
         select(MemoryHistory)
-        .where(MemoryHistory.memory_id == memory_id)
+        .where(col(MemoryHistory.memory_id).in_(chain))
         .order_by(col(MemoryHistory.created_at))
     )
     return list(session.exec(statement).all())

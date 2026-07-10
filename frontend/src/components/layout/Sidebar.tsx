@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   BrainCircuit,
+  ClipboardList,
   Database,
   History,
   LogOut,
@@ -30,6 +31,7 @@ const NAV = [
   { to: "/memory", label: "Memory", icon: Sparkles },
   { to: "/moments", label: "Moments", icon: Orbit },
   { to: "/sources", label: "Sources", icon: Database },
+  { to: "/about", label: "About you", icon: ClipboardList },
 ];
 
 export function Sidebar() {

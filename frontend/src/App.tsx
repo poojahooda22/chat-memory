@@ -12,6 +12,7 @@ import { Home } from "@/pages/Home";
 import { Login } from "@/pages/Login";
 import { Memory } from "@/pages/Memory";
 import { Moments } from "@/pages/Moments";
+import { Quiz } from "@/pages/Quiz";
 import { Sources } from "@/pages/Sources";
 
 const TITLES: Record<string, string> = {
@@ -19,6 +20,7 @@ const TITLES: Record<string, string> = {
   "/memory": "Memory",
   "/moments": "Moments",
   "/sources": "Sources",
+  "/about": "About you",
 };
 
 function Shell() {
@@ -30,6 +32,7 @@ function Shell() {
         <Route path="/memory" element={<Memory />} />
         <Route path="/moments" element={<Moments />} />
         <Route path="/sources" element={<Sources />} />
+        <Route path="/about" element={<Quiz />} />
       </Routes>
     </AppShell>
   );

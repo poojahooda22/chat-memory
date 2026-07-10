@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, Text
+from sqlalchemy import Column, ForeignKey, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -51,6 +51,23 @@ class Memory(SQLModel, table=True):
     # provenance: which episodes this fact came from
     source_episode_ids: list[str] = Field(
         default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    # trust model — mirrors Relationship's mean_confidence + is_valid ("invalidate, don't delete").
+    # A fact seeded from a quiz/import must be trusted less than one the user directly stated, and a
+    # later observation retires an old guess by superseding it (kept for provenance, not deleted).
+    source: str = Field(default="chat")  # chat | photo | quiz | import | inferred | mcp
+    confidence: float = Field(default=1.0)  # 0..1: directly observed = 1.0, seeded/guessed = lower
+    # retired by a later observation. NOT single-column indexed: every read filters user_id first,
+    # so the composite ix_memories_user_id_is_superseded (migration 0007) serves the hot path.
+    is_superseded: bool = Field(default=False)
+    # the fact that replaced this one — makes the belief chain queryable (old -> new -> newer).
+    # indexed (migration 0009): the history chain-walk queries by this column, and the ON DELETE
+    # SET NULL back-reference is scanned on every hard delete of a memories row.
+    superseded_by_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            Uuid, ForeignKey("memories.id", ondelete="SET NULL"), nullable=True, index=True
+        ),
     )
     is_deleted: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=_utcnow)

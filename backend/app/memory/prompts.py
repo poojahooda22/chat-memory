@@ -130,6 +130,32 @@ def build_summary_messages(episodes: Sequence[str]) -> list[dict]:
     ]
 
 
+# ── Style inference: read HOW the user writes off their own messages ─────────
+# Nobody states their communication style; they demonstrate it. This prompt reads a sample of
+# the user's own messages and distils the manner — never the content — into durable traits.
+
+STYLE_INFERENCE_SYSTEM = """You infer a user's COMMUNICATION STYLE from messages they wrote.
+
+Describe only HOW they write — tone, length, directness, formality, structure, emoji and
+punctuation habits, language mix — never WHAT they write about. Do not extract topics, facts,
+plans, or content preferences; only the manner of writing.
+
+Return 2-4 short, durable trait sentences in the third person, each starting with
+"Communication style:" (e.g. "Communication style: writes short, direct messages and prefers
+answers that lead with the conclusion"). State only traits the sample clearly demonstrates —
+if the messages support fewer traits, return fewer.
+
+Respond with strict JSON: {"traits": ["trait one", "trait two"]}"""
+
+
+def build_style_messages(samples: Sequence[str]) -> list[dict]:
+    body = "\n".join(f"- {s}" for s in samples)
+    return [
+        {"role": "system", "content": STYLE_INFERENCE_SYSTEM},
+        {"role": "user", "content": f"Messages the user wrote (oldest first):\n{body}"},
+    ]
+
+
 # ── Hybrid retrieval: decompose a question into structured filters ───────────
 
 QUERY_DECOMPOSE_SYSTEM = """You turn a question to a personal memory into structured search

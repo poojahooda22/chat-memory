@@ -148,9 +148,11 @@ def apply_label(
         if description
         else f"{name} is {kind_phrase} {entity_type}"
     )
+    # the label came from a PHOTO the user annotated — stamp its true origin, not the default "chat"
     op = record_fact(
         session, client, settings,
         user_id=episode.user_id, fact=fact, source_ids=[str(episode.id)],
+        source="photo",
     )
 
     # the graph edges among this photo's now-labeled entities re-form/strengthen — so the

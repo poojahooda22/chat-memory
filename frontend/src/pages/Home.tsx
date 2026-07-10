@@ -5,19 +5,24 @@ import { useNavigate } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { sendChat, uploadImages, type ChatResponse } from "@/lib/api";
+import { streamChat, uploadImages } from "@/lib/api";
 import { useConversations } from "@/lib/conversations";
 import { cn } from "@/lib/utils";
 
 const SUGGESTIONS = [
-  "Hi! I'm Pooja, a backend developer who codes in Go.",
+  "Hi! I'm Pooja, a backend developer who codes in Python.",
   "What do you remember about me?",
   "I love cycling on weekends.",
 ];
 
+// markdown body styling — shared by rendered turns and the live streaming bubble
+const MD_BODY =
+  "break-words [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:underline [&_code]:font-mono [&_code]:text-[12.5px] [&_code]:break-words [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background/60 [&_pre]:p-3 [&_pre_code]:break-normal";
+
 export function Home() {
   const { active, appendTurn } = useConversations();
   const [draft, setDraft] = useState("");
+  const [streaming, setStreaming] = useState<string | null>(null); // null = idle; else partial reply
   const [uploadNote, setUploadNote] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -34,30 +39,39 @@ export function Home() {
     onError: (err: Error) => setUploadNote(`upload failed: ${err.message}`),
   });
 
-  const mutation = useMutation({
-    mutationFn: (message: string) => sendChat(message, active.id),
-    onSuccess: (res: ChatResponse) => {
-      // recall stays server-side (memories_used/photos_used in the response) — the chat UI
-      // stays clean; the Memory page is where the receipts live
-      appendTurn(active.id, { role: "assistant", content: res.reply });
-      queryClient.invalidateQueries({ queryKey: ["memories"] });
-      scrollToBottom();
-    },
-  });
-
   function scrollToBottom() {
     requestAnimationFrame(() =>
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }),
     );
   }
 
-  function send(message: string) {
+  async function send(message: string) {
     const text = message.trim();
-    if (!text || mutation.isPending) return;
-    appendTurn(active.id, { role: "user", content: text });
+    if (!text || streaming !== null) return;
+    const convId = active.id;
+    appendTurn(convId, { role: "user", content: text });
     setDraft("");
-    mutation.mutate(text);
+    setStreaming(""); // "" = waiting for the first token (renders "thinking…")
     scrollToBottom();
+
+    let full = "";
+    try {
+      await streamChat(text, convId, (chunk) => {
+        full += chunk;
+        setStreaming(full);
+        scrollToBottom();
+      });
+      appendTurn(convId, { role: "assistant", content: full || "(no response)" });
+    } catch {
+      appendTurn(convId, {
+        role: "assistant",
+        content: "⚠️ Something went wrong — please try again.",
+      });
+    } finally {
+      setStreaming(null);
+      queryClient.invalidateQueries({ queryKey: ["memories"] });
+      scrollToBottom();
+    }
   }
 
   // Perplexity-style composer: an elevated bg-card shell with an auto-growing bare textarea
@@ -122,10 +136,10 @@ export function Home() {
         <button
           type="submit"
           aria-label="Send"
-          disabled={!draft.trim() || mutation.isPending}
+          disabled={!draft.trim() || streaming !== null}
           className={cn(
             "inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
-            draft.trim() && !mutation.isPending
+            draft.trim() && streaming === null
               ? "bg-primary text-primary-foreground hover:opacity-90"
               : "bg-secondary text-muted-foreground",
           )}
@@ -178,13 +192,24 @@ export function Home() {
               )}
             >
               {/* markdown body — long lines wrap, code blocks scroll inside the bubble */}
-              <div className="break-words [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:underline [&_code]:font-mono [&_code]:text-[12.5px] [&_code]:break-words [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background/60 [&_pre]:p-3 [&_pre_code]:break-normal">
+              <div className={MD_BODY}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.content}</ReactMarkdown>
               </div>
             </div>
           </div>
         ))}
-          {mutation.isPending && <div className="text-muted-foreground text-xs">thinking…</div>}
+          {streaming !== null &&
+            (streaming === "" ? (
+              <div className="text-muted-foreground text-xs">thinking…</div>
+            ) : (
+              <div className="flex justify-start">
+                <div className="bg-secondary text-secondary-foreground max-w-[85%] min-w-0 overflow-hidden rounded-xl px-4 py-2.5 text-sm">
+                  <div className={MD_BODY}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+            ))}
         </div>
       </div>
       <div className="shrink-0 px-4 py-3">

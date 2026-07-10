@@ -1,6 +1,7 @@
-"""Phase 2: the remembering chat reads memory to answer, and writes memory as it talks.
+"""Phase 2: the remembering chat READS memory to answer.
 
-Zero tokens — the fake LLM scripts the reply and the follow-up extraction/decision.
+The memory WRITE now runs off the request path (learn_from_exchange -> record_exchange), so
+answer() only retrieves + generates. Zero tokens — the fake LLM scripts each reply.
 """
 
 import json
@@ -10,6 +11,7 @@ from sqlmodel import select
 
 from app.config import get_settings
 from app.memory.chat import answer
+from app.memory.pipeline import record_exchange
 from app.models import Episode, Memory
 from tests.conftest import FakeLLM, fake_embedding
 
@@ -44,8 +46,8 @@ def test_chat_retrieves_memory_and_answers_from_it(db_session):
     db_session.add(seeded)
     db_session.flush()
 
-    # decompose (no filters), reply, then extraction returns no new fact
-    llm = FakeLLM([NO_FILTER, "Your name is Pooja!", json.dumps({"facts": []})])
+    # answer() now only decomposes (no filters) + replies — the write is off the request path
+    llm = FakeLLM([NO_FILTER, "Your name is Pooja!"])
     result = answer(
         db_session, llm, SETTINGS,
         user_id=user, conversation_id="c1", message="what is my name?",
@@ -53,9 +55,9 @@ def test_chat_retrieves_memory_and_answers_from_it(db_session):
 
     assert "Pooja" in result.reply
     assert "Name is Pooja" in result.memories_used  # it actually retrieved the memory
-    # the exchange was recorded as episodes (user question + assistant reply)
+    # the request path writes nothing now — answer() creates no episodes
     episodes = list(db_session.exec(select(Episode).where(Episode.user_id == user)).all())
-    assert len(episodes) == 2
+    assert len(episodes) == 0
 
 
 def test_chat_retrieves_photo_episodes(db_session):
@@ -74,7 +76,7 @@ def test_chat_retrieves_photo_episodes(db_session):
     db_session.add(photo)
     db_session.flush()
 
-    llm = FakeLLM([NO_FILTER, "Your photos show your fluffy dog!", json.dumps({"facts": []})])
+    llm = FakeLLM([NO_FILTER, "Your photos show your fluffy dog!"])
     result = answer(
         db_session, llm, SETTINGS,
         user_id=user, conversation_id="c1", message="what do my photos show about my dog?",
@@ -85,21 +87,26 @@ def test_chat_retrieves_photo_episodes(db_session):
     assert "fluffy dog" in result.photos_used[0]
 
 
-def test_chat_records_a_new_fact_stated_mid_conversation(db_session):
+def test_background_write_teaches_memory(db_session):
+    """The write moved off the request path: the background task (learn_from_exchange) runs
+    record_exchange. We run that write directly here — in-session, so it stays isolated — to
+    confirm a chat exchange still teaches the memory the same way it always did."""
     user = _user()
-    # decompose (no filters), reply, extraction finds a fact, decision ADDs it
+    # extraction over the exchange finds one fact, the decision ADDs it (no decompose call here —
+    # record_exchange is the write path, not the read path)
     llm = FakeLLM([
-        NO_FILTER,
-        "Nice to meet you, Alex!",
         json.dumps({"facts": ["Name is Alex"]}),
         json.dumps({"event": "ADD", "target_index": None, "text": "Name is Alex"}),
     ])
-    result = answer(
+    record_exchange(
         db_session, llm, SETTINGS,
-        user_id=user, conversation_id="c1", message="Hi, I'm Alex",
+        user_id=user, conversation_id="c1",
+        messages=[
+            {"role": "user", "content": "Hi, I'm Alex"},
+            {"role": "assistant", "content": "Nice to meet you, Alex!"},
+        ],
     )
     db_session.flush()
 
-    assert result.operations[0].event == "ADD"
     memories = _live_memories(db_session, user)
-    assert any("Alex" in m.content for m in memories)  # the chat taught the memory
+    assert any("Alex" in m.content for m in memories)  # the exchange taught the memory
