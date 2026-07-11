@@ -8,9 +8,11 @@ trail. search_memories() is the read path Phase 2's chat will reuse.
 The LLM client and Settings are passed in, never imported globally, so tests inject fakes.
 """
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
 from app.config import Settings
 from app.memory.embeddings import embed_text
@@ -322,6 +324,131 @@ def search_image_episodes(
         .limit(limit)
     )
     return list(session.exec(stmt).all())
+
+
+# ── hybrid keyword + dense episode search (the cross-conversation dialogue read path) ──
+# Dense cosine alone silently misses rare proper nouns / technical identifiers ("TanStack Query") —
+# exactly the class an embedding under-weights — so we fuse a keyword channel with the dense one by
+# Reciprocal Rank Fusion. Faithful to Mem0's multi-signal retrieval, not single-vector search.
+
+# recall-scaffolding words carry no topical signal; dropped so the keyword channel matches what the
+# user asks ABOUT, not how they phrased the request ("do you remember what we discussed about X").
+_KEYWORD_STOPWORDS = frozenset({
+    "remember", "recall", "talk", "talked", "talking", "discuss", "discussed", "discussing", "say",
+    "said", "tell", "told", "mention", "mentioned", "chat", "chatted", "conversation", "conversations",
+    "yesterday", "today", "earlier", "before", "about", "regarding", "did", "do", "does", "what",
+    "when", "we", "i", "you", "me", "my", "our", "the", "a", "an", "and", "or", "of", "to", "in",
+    "on", "for", "with", "was", "were", "is", "are", "that", "this", "it", "have", "had", "has",
+    "ever", "previously", "last", "time",
+})
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def safe_lexemes(sources: Sequence[str]) -> list[str]:
+    """Turn raw text into clean, de-duplicated lexemes safe to OR-join into a to_tsquery.
+
+    NEVER pass raw/LLM text to to_tsquery — it raises a syntax error on spaces or punctuation
+    ('TanStack Query', 'Node.js'), which aborts the transaction and kills the whole read path. We
+    lowercase, split on non-alphanumerics, drop the recall-scaffolding stopwords, and keep the
+    topical terms. Postgres drops english stopwords again inside to_tsquery, so an all-stopword
+    query yields an empty tsquery (no keyword match, dense still runs) rather than an error.
+    """
+    seen: dict[str, None] = {}
+    for src in sources:
+        if not src:
+            continue
+        for tok in _TOKEN_RE.findall(src.lower()):
+            if len(tok) < 2 or tok in _KEYWORD_STOPWORDS:
+                continue
+            seen.setdefault(tok, None)
+    return list(seen)
+
+
+@dataclass
+class EpisodeHit:
+    """One episode surfaced by hybrid search, with the signals the caller's floor + rerank read.
+
+    `cosine_distance` is set when the episode came from the dense list; `sparse_rank` (1-based) when
+    it came from the keyword list — an episode can be in one or both. The floor keeps an episode that
+    is dense-close OR a keyword hit, so a rare proper noun caught only by keyword (dense-far) still
+    survives — the incident case.
+    """
+
+    episode: "Episode"
+    cosine_distance: float | None
+    sparse_rank: int | None
+    rrf_score: float
+    final_score: float = 0.0
+
+
+def search_episodes(
+    session: Session, client, settings: Settings, *, user_id: str, source: str, semantic_query: str,
+    keyword_sources: Sequence[str], embedding: list[float] | None = None, limit: int | None = None,
+    exclude_episode_ids: Sequence = (),
+) -> list[EpisodeHit]:
+    """Hybrid search over episodes of one `source`: a dense (cosine) list and a keyword (FTS) list,
+    fused by RRF. Ranked candidates returned RRF-desc; the caller applies the relevance floor,
+    time-window bonus, and final top-k. Deterministic (id tiebreaker on both lists + on the fuse).
+    """
+    exclude = {e for e in exclude_episode_ids if e is not None}
+    m = max(limit or settings.dialogue_candidates, settings.dialogue_candidates) + len(exclude)
+    if embedding is None:
+        embedding = embed_text(client, settings.embedding_model, semantic_query)
+
+    # dense channel — ranked by the semantic_query embedding, deterministic id tiebreaker
+    dist = col(Episode.embedding).cosine_distance(embedding)  # pyrefly: ignore[missing-attribute]
+    dense_stmt = (
+        select(Episode, dist)
+        .where(
+            Episode.user_id == user_id,
+            col(Episode.context)["source"].astext == source,  # pyrefly: ignore[missing-attribute]
+            col(Episode.embedding).is_not(None),
+        )
+        .order_by(dist.asc(), col(Episode.id).desc())
+        .limit(m)
+    )
+    if exclude:
+        dense_stmt = dense_stmt.where(col(Episode.id).notin_(exclude))
+    dense_rows = list(session.exec(dense_stmt).all())
+
+    # keyword channel — OR-joined safe lexemes; empty terms → skip (dense-only, fail-open)
+    sparse_rows: list[Episode] = []
+    terms = safe_lexemes(keyword_sources)
+    if terms:
+        tsv = func.to_tsvector("english", col(Episode.content))
+        tsq = func.to_tsquery("english", " | ".join(terms))
+        sparse_stmt = (
+            select(Episode)
+            .where(
+                Episode.user_id == user_id,
+                col(Episode.context)["source"].astext == source,  # pyrefly: ignore[missing-attribute]
+                tsv.op("@@")(tsq),
+            )
+            .order_by(func.ts_rank(tsv, tsq).desc(), col(Episode.id).desc())
+            .limit(m)
+        )
+        if exclude:
+            sparse_stmt = sparse_stmt.where(col(Episode.id).notin_(exclude))
+        sparse_rows = list(session.exec(sparse_stmt).all())
+
+    # Reciprocal Rank Fusion: score = Σ 1/(k + rank) across the two lists
+    rk = settings.rrf_k
+    hits: dict = {}
+    for rank, row in enumerate(dense_rows, start=1):
+        episode, distance = row
+        hits[episode.id] = EpisodeHit(
+            episode=episode, cosine_distance=distance, sparse_rank=None, rrf_score=1.0 / (rk + rank),
+        )
+    for rank, episode in enumerate(sparse_rows, start=1):
+        existing = hits.get(episode.id)
+        if existing is None:
+            hits[episode.id] = EpisodeHit(
+                episode=episode, cosine_distance=None, sparse_rank=rank, rrf_score=1.0 / (rk + rank),
+            )
+        else:
+            existing.sparse_rank = rank
+            existing.rrf_score += 1.0 / (rk + rank)
+    return sorted(hits.values(), key=lambda h: (h.rrf_score, str(h.episode.id)), reverse=True)
 
 
 def run_summary_refresh(engine, client, settings: Settings, conversation_id: str) -> None:

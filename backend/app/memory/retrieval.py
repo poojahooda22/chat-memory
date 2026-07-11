@@ -11,21 +11,46 @@ falls back to plain cosine so we never over-filter.
 the decompose → filter → rank core, which is the actual correctness fix.)
 """
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlmodel import Session, col, func, select
 
 from app.config import Settings
 from app.memory.embeddings import embed_text
 from app.memory.lineage import predecessors_for
-from app.memory.pipeline import search_image_episodes, search_memories
+from app.memory.pipeline import (
+    EpisodeHit,
+    search_episodes,
+    search_image_episodes,
+    search_memories,
+)
 from app.memory.prompts import build_decompose_messages, parse_json
 from app.models import Entity, Episode, EpisodeEntity, Memory
 
 FILTERED_CAP = 50   # an aggregate ("all" / "how many") needs the full filtered set, not a top-k
 RANKED_TOP_K = 8    # for a semantic question inside a filter, how many to rank in
 FACT_TOP_K = 5      # distilled facts injected alongside, as today
+
+
+def _local_date(dt: datetime, tz: str) -> date:
+    """The calendar date of an instant in the user's timezone (episodes are stored aware-UTC)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(ZoneInfo(tz)).date()
+
+
+def _escape_excerpt(text: str, max_chars: int) -> str:
+    """Flatten a stored turn into a single safe prompt line: strip control chars/newlines (so a
+    crafted excerpt can't forge structure) and truncate. Best-effort — not a trust boundary."""
+    cleaned = re.sub(r"[\x00-\x1f]", " ", text).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[:max_chars].rstrip() + "…"
+    return cleaned
 
 
 @dataclass
@@ -46,6 +71,7 @@ class RetrievalResult:
     facts: list[Memory]
     photos: list[Episode]
     spec: QuerySpec
+    dialogue: list[EpisodeHit] = field(default_factory=list)  # past chat turns, floored + reranked
 
 
 @dataclass
@@ -80,15 +106,39 @@ class RecalledPhoto:
 
 
 @dataclass
+class RecalledExchange:
+    """A past chat turn surfaced by cross-conversation recall, display-ready.
+
+    `content` is already escaped + truncated; `local_date` is the turn's date in the user's tz (so
+    the [date] cue in .line matches how the user resolved "yesterday"). `cosine_distance` is None
+    when the turn was found only by the keyword channel."""
+    episode_id: str
+    conversation_id: str | None
+    role: str
+    content: str
+    occurred_at: datetime
+    local_date: date
+    cosine_distance: float | None
+
+    @property
+    def line(self) -> str:
+        return f"[{self.local_date.isoformat()}] {self.role}: {self.content}"
+
+
+@dataclass
 class RecallBundle:
-    """The recall payload: ranked facts + photo memories, each carrying provenance, plus the
-    decomposed query and ONE per-recall confidence. The chat prompt is built from .fact_lines /
-    .photo_lines; the extra fields (source, confidence, episode ids) are what the MCP `recall`
-    tool and the proactive WHEN-gate will consume."""
+    """The recall payload: ranked facts + photo memories + past-conversation excerpts, each carrying
+    provenance, plus the decomposed query and ONE per-recall confidence. The chat prompt is built
+    from .fact_lines / .photo_lines / .dialogue_lines; the extra fields (source, confidence, episode
+    ids, evidence) are what the MCP `recall` tool and the proactive WHEN-gate consume."""
     facts: list[RecalledFact]
     photos: list[RecalledPhoto]
     spec: QuerySpec
     confidence: float  # v1: mean confidence of the recalled facts, 0 when none were found
+    dialogue: list[RecalledExchange] = field(default_factory=list)
+    # what the answer can be grounded in: distilled facts, past-conversation excerpts, or nothing.
+    # 'dialogue' with confidence 0 is NOT "nothing known" — the answer is in the excerpts.
+    evidence: str = "none"  # facts | dialogue | none
 
     @property
     def fact_lines(self) -> list[str]:
@@ -98,15 +148,30 @@ class RecallBundle:
     def photo_lines(self) -> list[str]:
         return [p.line for p in self.photos]
 
+    @property
+    def dialogue_lines(self) -> list[str]:
+        return [d.line for d in self.dialogue]
+
+    @property
+    def dialogue_present(self) -> bool:
+        return bool(self.dialogue)
+
 
 def _chat_json(client, model: str, messages: list[dict]) -> dict:
     response = client.chat.completions.create(model=model, messages=messages, temperature=0)
     return parse_json(response.choices[0].message.content)
 
 
-def decompose_query(client, settings: Settings, message: str) -> QuerySpec:
-    """One LLM call → the structured filters a question implies (entity / time / place)."""
-    today = datetime.now(UTC).date().isoformat()
+def decompose_query(
+    client, settings: Settings, message: str, *, now_local: date | None = None
+) -> QuerySpec:
+    """One LLM call → the structured filters a question implies (entity / time / place).
+
+    `now_local` is today's date in the USER's timezone — so "yesterday" resolves to the user's
+    calendar day, not the server's UTC day (a 5.5h gap for an IST user, enough to mis-date a
+    late-night chat). Falls back to the UTC date only when no tz context is supplied.
+    """
+    today = (now_local or datetime.now(UTC).date()).isoformat()
     raw = _chat_json(client, settings.llm_model, build_decompose_messages(message, today))
 
     time_range: tuple[date, date] | None = None
@@ -176,14 +241,50 @@ def _filtered_photos(
     return list(session.exec(stmt).all())
 
 
+def _in_window(occurred_at: datetime, time_range: tuple[date, date] | None, tz: str) -> bool:
+    """Is a turn inside the question's (soft, ±1 day) time window, in the user's local calendar?"""
+    if time_range is None:
+        return False
+    d = _local_date(occurred_at, tz)
+    return time_range[0] - timedelta(days=1) <= d <= time_range[1] + timedelta(days=1)
+
+
+def _rerank_dialogue(
+    hits: list[EpisodeHit], spec: QuerySpec, settings: Settings, tz: str
+) -> list[EpisodeHit]:
+    """Apply the relevance floor, then the SOFT time boost, then take the top-k.
+
+    Floor: keep a turn if it is dense-close OR a keyword hit — so a rare proper noun caught only by
+    keyword (dense-far) survives, which is the whole incident case. Time is a small ADDITIVE bonus
+    (never a hard filter), so a strongly-relevant out-of-window turn can still outrank a weak
+    in-window one, and an empty in-window set never produces a confident false denial."""
+    kept: list[EpisodeHit] = []
+    for h in hits:
+        keyword_hit = h.sparse_rank is not None
+        dense_close = (
+            h.cosine_distance is not None and h.cosine_distance <= settings.dialogue_max_distance
+        )
+        if not (keyword_hit or dense_close):
+            continue
+        in_window = _in_window(h.episode.occurred_at, spec.time_range, tz)
+        h.final_score = h.rrf_score + (settings.dialogue_window_bonus if in_window else 0.0)
+        kept.append(h)
+    kept.sort(key=lambda h: (h.final_score, str(h.episode.id)), reverse=True)
+    return kept[: settings.dialogue_top_k]
+
+
 def retrieve(
-    session: Session, client, settings: Settings, *, user_id: str, message: str
+    session: Session, client, settings: Settings, *, user_id: str, message: str,
+    exclude_episode_ids: Sequence = (), user_tz: str | None = None,
 ) -> RetrievalResult:
     """Decompose the question, filter the photo store exactly when it names an entity/time/place,
-    else fall back to plain cosine. Facts are always searched by similarity, as before."""
-    spec = decompose_query(client, settings, message)
-    # embed the raw question ONCE and reuse it for the facts search and (on the filterless path)
-    # the episode search — the same query used to be embedded twice per turn
+    else fall back to plain cosine; search facts by similarity; AND search PAST chat episodes
+    (hybrid keyword+dense) so cross-conversation questions ("did we talk about X?") are answerable.
+    `exclude_episode_ids` are the current conversation's recent turns already injected verbatim."""
+    tz = user_tz or settings.user_tz
+    now_local = datetime.now(ZoneInfo(tz)).date()
+    spec = decompose_query(client, settings, message, now_local=now_local)
+    # embed the raw question ONCE and reuse it for facts + the filterless image path
     query_vec = embed_text(client, settings.embedding_model, message)
     facts = search_memories(
         session, client, settings, user_id=user_id, query=message, limit=FACT_TOP_K,
@@ -196,19 +297,40 @@ def retrieve(
             session, client, settings, user_id=user_id, query=message, limit=3,
             embedding=query_vec,
         )
-    return RetrievalResult(facts=facts, photos=photos, spec=spec)
+
+    # PAST CHAT EPISODES — the cross-conversation dialogue read path. Dense channel ranks by the
+    # decompose rewrite (reuse query_vec when it equals the raw message); keyword channel gets the
+    # RAW message + entities + rewrite (raw terms preserve the proper noun a rewrite can drift).
+    semantic_query = spec.semantic_query or message
+    dialogue_vec = (
+        query_vec if semantic_query == message
+        else embed_text(client, settings.embedding_model, semantic_query)
+    )
+    dialogue_hits = search_episodes(
+        session, client, settings, user_id=user_id, source="chat",
+        semantic_query=semantic_query,
+        keyword_sources=[message, *spec.entities, semantic_query],
+        embedding=dialogue_vec, exclude_episode_ids=exclude_episode_ids,
+    )
+    dialogue = _rerank_dialogue(dialogue_hits, spec, settings, tz)
+    return RetrievalResult(facts=facts, photos=photos, spec=spec, dialogue=dialogue)
 
 
 def recall(
-    session: Session, client, settings: Settings, *, user_id: str, message: str
+    session: Session, client, settings: Settings, *, user_id: str, message: str,
+    exclude_episode_ids: Sequence = (), user_tz: str | None = None,
 ) -> RecallBundle:
     """The public read path: run hybrid retrieval, then wrap every result with its receipts.
 
     Reshapes retrieve()'s raw ORM rows into a provenance-carrying bundle. The chat prompt uses
-    only .fact_lines / .photo_lines; the extra per-item fields (source, confidence, episode ids)
-    and the single per-recall confidence are what the MCP layer and the proactive gate read.
+    .fact_lines / .photo_lines / .dialogue_lines; the extra per-item fields (source, confidence,
+    episode ids, evidence) are what the MCP layer and the proactive gate read.
     """
-    raw = retrieve(session, client, settings, user_id=user_id, message=message)
+    tz = user_tz or settings.user_tz
+    raw = retrieve(
+        session, client, settings, user_id=user_id, message=message,
+        exclude_episode_ids=exclude_episode_ids, user_tz=tz,
+    )
     # one batched lineage lookup for ALL recalled facts (no per-fact N+1). ingested_at is the LIVE
     # row's own created_at (when the engine recorded the correction), never the predecessor's birth.
     lineage = predecessors_for(session, [m.id for m in raw.facts])
@@ -235,8 +357,25 @@ def recall(
         )
         for e in raw.photos
     ]
+    dialogue = [
+        RecalledExchange(
+            episode_id=str(h.episode.id),
+            conversation_id=h.episode.conversation_id,
+            role=h.episode.context.get("role", "user"),
+            content=_escape_excerpt(h.episode.content, settings.dialogue_excerpt_chars),
+            occurred_at=h.episode.occurred_at,
+            local_date=_local_date(h.episode.occurred_at, tz),
+            cosine_distance=h.cosine_distance,
+        )
+        for h in raw.dialogue
+    ]
     # v1 per-recall confidence: how much we trust the FACTS we're answering from (photos are
     # grounded episodes and carry no confidence field). 0 when no facts were found. Later this can
     # blend recency + the number of supporting episodes.
     confidence = sum(f.confidence for f in facts) / len(facts) if facts else 0.0
-    return RecallBundle(facts=facts, photos=photos, spec=raw.spec, confidence=confidence)
+    # what the answer can stand on. dialogue-with-confidence-0 must NOT read as "nothing known".
+    evidence = "facts" if facts else ("dialogue" if dialogue else "none")
+    return RecallBundle(
+        facts=facts, photos=photos, spec=raw.spec, confidence=confidence,
+        dialogue=dialogue, evidence=evidence,
+    )

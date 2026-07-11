@@ -1,6 +1,8 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    # pinned: iterative_scan (multi-tenant recall) needs pgvector >= 0.8.0; the bare `pg16` tag is
+    # rolling and a fresh pull could drop below it. 0.8.x is installed and verified.
+    image: pgvector/pgvector:0.8-pg16
     container_name: chat-memory-db
     environment:
       POSTGRES_USER: chatmemory

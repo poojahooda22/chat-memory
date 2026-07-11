@@ -1,15 +1,43 @@
 from collections.abc import Iterator
 
 from fastapi import Request
-from sqlalchemy import Engine
+from sqlalchemy import Engine, event
 from sqlmodel import Session, create_engine
 
 from app.config import Settings
 
+_ALLOWED_ITERATIVE_SCAN = {"off", "strict_order", "relaxed_order"}
+
+
+def install_hnsw_guc(engine: Engine, settings: Settings) -> None:
+    """Set pgvector's HNSW search GUCs per-transaction on every connection this engine opens.
+
+    Without iterative scan a `WHERE user_id = ?` filter is applied AFTER the index returns only
+    `ef_search` candidates, so a tenant owning a small fraction of rows silently gets fewer than
+    the requested top-k (recall collapse). `relaxed_order` keeps scanning until the LIMIT is
+    satisfied. SET LOCAL scopes it to the current transaction only, so it never leaks onto a
+    pooled connection's next reuse — which is why it lives in the `begin` event, not `connect`.
+
+    Registered on BOTH the app engine (build_engine) and the test engine (conftest) so the
+    behavior under test matches production — a listener-less test engine would pass a `SHOW`
+    assertion that production fails.
+    """
+    mode = settings.hnsw_iterative_scan
+    if mode not in _ALLOWED_ITERATIVE_SCAN:
+        mode = "relaxed_order"
+    ef_search = int(settings.hnsw_ef_search)
+
+    @event.listens_for(engine, "begin")
+    def _set_hnsw_guc(conn) -> None:  # conn is inside the just-started transaction
+        conn.exec_driver_sql(f"SET LOCAL hnsw.iterative_scan = {mode}")
+        conn.exec_driver_sql(f"SET LOCAL hnsw.ef_search = {ef_search}")
+
 
 def build_engine(settings: Settings) -> Engine:
     """Create the one engine (connection pool). Owned by the app lifespan."""
-    return create_engine(settings.database_url, pool_pre_ping=True)
+    engine = create_engine(settings.database_url, pool_pre_ping=True)
+    install_hnsw_guc(engine, settings)
+    return engine
 
 
 def get_session(request: Request) -> Iterator[Session]:

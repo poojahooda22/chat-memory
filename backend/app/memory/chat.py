@@ -6,7 +6,7 @@ exchange so the conversation keeps teaching the system). Retrieval lives in retr
 write path is record_exchange() from the Phase-1 pipeline.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlmodel import Session, col, select
 
@@ -22,21 +22,23 @@ class ChatResult:
     reply: str
     memories_used: list[str]
     photos_used: list[str]
+    dialogue_used: list[str] = field(default_factory=list)
 
 
-def _recent_turns(session: Session, *, user_id, conversation_id) -> list[dict]:
-    """The last few messages of this conversation, chronological, as chat turns."""
+def recent_turn_episodes(session: Session, *, user_id, conversation_id) -> list[Episode]:
+    """The last few episodes of this conversation, newest first — the SINGLE source both the recent-
+    turns prompt block and the dialogue-search exclusion read from, so the set injected verbatim is
+    exactly the set excluded from cross-conversation recall (no double-injection, no dropped turn).
+    Deterministic id tiebreaker so the boundary row is stable across readers."""
     if conversation_id is None:
         return []
     stmt = (
         select(Episode)
         .where(Episode.user_id == user_id, Episode.conversation_id == conversation_id)
-        .order_by(col(Episode.occurred_at).desc())
+        .order_by(col(Episode.occurred_at).desc(), col(Episode.id).desc())
         .limit(HISTORY_TURNS)
     )
-    rows = list(session.exec(stmt).all())
-    rows.reverse()
-    return [{"role": e.context.get("role", "user"), "content": e.content} for e in rows]
+    return list(session.exec(stmt).all())
 
 
 @dataclass
@@ -44,6 +46,7 @@ class PreparedReply:
     messages: list[dict]
     memories_used: list[str]
     photos_used: list[str]
+    dialogue_used: list[str] = field(default_factory=list)
 
 
 def prepare_reply(
@@ -58,17 +61,30 @@ def prepare_reply(
     """RETRIEVE + AUGMENT: hybrid retrieval, then build the prompt messages. GENERATE is the
     caller's step — the chat route STREAMS it token by token; answer() runs it in one shot. Both
     share this so retrieval + prompt-building stay identical."""
-    # RETRIEVE — hybrid recall: decompose the question, filter/rank facts + photos, return them as
-    # a receipts-carrying bundle. The prompt uses only the text lines; the provenance + confidence
-    # on the bundle are for the MCP layer + proactive gate (P2).
-    bundle = recall(session, client, settings, user_id=user_id, message=message)
+    # The current conversation's recent turns, read ONCE: they become the short-term history block
+    # AND the exclusion set for cross-conversation dialogue search (so a turn is never both injected
+    # verbatim and recalled as an excerpt, and older turns of THIS conversation stay searchable).
+    recent = recent_turn_episodes(session, user_id=user_id, conversation_id=conversation_id)
+    exclude_ids = [e.id for e in recent]
+    history = [
+        {"role": e.context.get("role", "user"), "content": e.content} for e in reversed(recent)
+    ]
+
+    # RETRIEVE — hybrid recall: facts + photos + PAST chat excerpts, as a receipts-carrying bundle.
+    bundle = recall(
+        session, client, settings, user_id=user_id, message=message,
+        exclude_episode_ids=exclude_ids, user_tz=settings.user_tz,
+    )
     memory_texts = bundle.fact_lines
     photo_texts = bundle.photo_lines
+    dialogue_texts = bundle.dialogue_lines
 
-    # AUGMENT — inject memories + photo memories + recent turns + the new message
-    history = _recent_turns(session, user_id=user_id, conversation_id=conversation_id)
-    messages = build_chat_messages(memory_texts, photo_texts, history, message)
-    return PreparedReply(messages=messages, memories_used=memory_texts, photos_used=photo_texts)
+    # AUGMENT — inject memories + photo memories + past-conversation excerpts + recent turns
+    messages = build_chat_messages(memory_texts, photo_texts, dialogue_texts, history, message)
+    return PreparedReply(
+        messages=messages, memories_used=memory_texts, photos_used=photo_texts,
+        dialogue_used=dialogue_texts,
+    )
 
 
 def answer(
@@ -91,5 +107,6 @@ def answer(
     )
     reply = completion.choices[0].message.content.strip()
     return ChatResult(
-        reply=reply, memories_used=prepared.memories_used, photos_used=prepared.photos_used
+        reply=reply, memories_used=prepared.memories_used, photos_used=prepared.photos_used,
+        dialogue_used=prepared.dialogue_used,
     )

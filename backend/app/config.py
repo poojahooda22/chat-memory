@@ -43,6 +43,27 @@ class Settings(BaseSettings):
     # restrict to the deployed frontend URL before going public.
     cors_origins: list[str] = ["*"]
 
+    # pgvector HNSW search tuning (set per-transaction in db.install_hnsw_guc). iterative scan keeps
+    # scanning the index until the post-filter (user_id/source) yields the LIMIT — without it a
+    # multi-tenant filter silently under-returns. relaxed_order is the production default; we re-rank
+    # by cosine in SQL so approximate ordering is harmless.
+    hnsw_iterative_scan: str = "relaxed_order"  # off | strict_order | relaxed_order
+    hnsw_ef_search: int = 100
+
+    # Cross-conversation dialogue recall (retrieval.py). The chat read path searches past chat
+    # episodes (hybrid keyword + dense, RRF-fused) so "did we talk about X?" is answerable.
+    dialogue_candidates: int = 50   # per-channel candidate pool before fusion
+    dialogue_top_k: int = 6         # excerpts injected into the prompt
+    dialogue_max_distance: float = 0.6  # cosine-distance floor; a keyword hit bypasses it
+    dialogue_window_bonus: float = 0.005  # additive time-boost; MUST stay < 1/(rrf_k+1) to avoid a hard tier
+    dialogue_excerpt_chars: int = 400
+    rrf_k: int = 60  # Reciprocal Rank Fusion constant (swept in eval; TREC default)
+
+    # the user's timezone, used to resolve "yesterday" and render excerpt dates in local time.
+    # single-user default; per-user tz arrives with auth. Date-anchored recall is correct for ONE
+    # tz until then — a second-tz user gets the wrong "yesterday" boundary (documented pre-mortem).
+    user_tz: str = "Asia/Kolkata"
+
 
 @lru_cache
 def get_settings() -> Settings:

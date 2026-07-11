@@ -18,13 +18,16 @@ from sqlalchemy import create_engine
 from sqlmodel import Session
 
 from app.config import get_settings
+from app.db import install_hnsw_guc
 
 EMBEDDING_DIM = 1536
 
 
 @pytest.fixture
 def db_session() -> Iterator[Session]:
-    engine = create_engine(get_settings().database_url)
+    settings = get_settings()
+    engine = create_engine(settings.database_url)
+    install_hnsw_guc(engine, settings)  # match prod: iterative scan on, so recall tests are real
     connection = engine.connect()
     transaction = connection.begin()
     session = Session(bind=connection)
