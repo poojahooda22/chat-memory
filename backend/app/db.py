@@ -34,8 +34,22 @@ def install_hnsw_guc(engine: Engine, settings: Settings) -> None:
 
 
 def build_engine(settings: Settings) -> Engine:
-    """Create the one engine (connection pool). Owned by the app lifespan."""
-    engine = create_engine(settings.database_url, pool_pre_ping=True)
+    """Create the one engine (connection pool). Owned by the app lifespan.
+
+    The pool is sized explicitly (not the SQLAlchemy default 5+10=15). Per process the ceiling is
+    `db_pool_size + db_max_overflow`, set above the ~40 worker-thread limiter so the MCP tool path —
+    one connection per worker thread — is bounded by the thread limiter, not by blocking on the
+    pool. This does NOT hold for the REST streaming /chat path, which holds its connection across
+    the whole stream + background write, so there the pool caps concurrent streams (releasing it
+    before the LLM call is the deeper fix, deferred). The pool is per-process and each always-on
+    process (REST, MCP) has its own — keep the sum under Postgres max_connections; see config.py.
+    """
+    engine = create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+    )
     install_hnsw_guc(engine, settings)
     return engine
 

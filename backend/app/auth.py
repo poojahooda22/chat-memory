@@ -35,11 +35,15 @@ def _signing_key(token: str, settings: Settings):
     return _jwks_client(jwks_url).get_signing_key_from_jwt(token).key
 
 
-def verify_token(token: str, settings: Settings) -> str:
-    """Verify a Supabase JWT and return its user id (`sub`). Raises 401 on any problem."""
+def verify_token_claims(token: str, settings: Settings) -> dict:
+    """Verify a Supabase JWT (signature + expiry) and return its full claims.
+
+    The single verification path for every surface — the REST dependency reads `sub` from it,
+    and the MCP token verifier additionally reads `exp`. Raises 401 on any problem.
+    """
     try:
         key = _signing_key(token, settings)
-        claims = jwt.decode(
+        return jwt.decode(
             token,
             key,
             algorithms=_ALGORITHMS,
@@ -50,6 +54,11 @@ def verify_token(token: str, settings: Settings) -> str:
         raise
     except Exception as exc:  # signature/expiry/format — all mean "not a valid token"
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+
+
+def verify_token(token: str, settings: Settings) -> str:
+    """Verify a Supabase JWT and return its user id (`sub`). Raises 401 on any problem."""
+    claims = verify_token_claims(token, settings)
     user_id = claims.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Token missing subject")

@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,23 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "postgresql+psycopg://chatmemory:chatmemory@localhost:5434/chatmemory"
+
+    # DB connection pool. Ceiling per PROCESS = db_pool_size + db_max_overflow, and each always-on
+    # process (the REST app AND the MCP server) opens its OWN pool of this size against one Postgres.
+    # Two separate concerns:
+    #  - Per process, the MCP tool path opens one connection per worker thread, so a ceiling ABOVE
+    #    the ~40 anyio to_thread limiter means that path is bounded by the thread limiter (graceful
+    #    wait), never by blocking on the pool. NOTE this does NOT hold for the REST streaming /chat
+    #    path: it pins its connection across the whole token stream + background write (and the
+    #    background write opens a SECOND connection, so peak is 2 per in-flight stream → effective
+    #    /chat capacity during that window is ~half the ceiling), so THERE the pool (not the thread
+    #    limiter) caps concurrent streams. Releasing the connection before the LLM call is the
+    #    deeper fix (deferred).
+    #  - Across processes, the SUM of every always-on pool's ceiling must stay under Postgres
+    #    max_connections (default 100) minus superuser_reserved_connections (default 3) ≈ 97. At 45
+    #    each, one REST + one MCP = 90. Raise Postgres capacity before adding replicas.
+    db_pool_size: int = Field(default=15, gt=0)
+    db_max_overflow: int = Field(default=30, ge=0)
 
     ai_gateway_api_key: str = ""
     ai_gateway_base_url: str = "https://ai-gateway.vercel.sh/v1"
@@ -58,6 +76,13 @@ class Settings(BaseSettings):
     dialogue_window_bonus: float = 0.005  # additive time-boost; MUST stay < 1/(rrf_k+1) to avoid a hard tier
     dialogue_excerpt_chars: int = 400
     rrf_k: int = 60  # Reciprocal Rank Fusion constant (swept in eval; TREC default)
+
+    # Remote MCP server (Streamable HTTP). The stdio entrypoint ignores all three. mcp_public_url
+    # is the server's own resource identifier, advertised in WWW-Authenticate metadata — set it to
+    # the deployed https URL in production.
+    mcp_http_host: str = "127.0.0.1"
+    mcp_http_port: int = 8010
+    mcp_public_url: str = "http://127.0.0.1:8010/mcp"
 
     # the user's timezone, used to resolve "yesterday" and render excerpt dates in local time.
     # single-user default; per-user tz arrives with auth. Date-anchored recall is correct for ONE
