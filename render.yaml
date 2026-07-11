@@ -1,0 +1,31 @@
+# Render Blueprint for the chat-memory API (free tier, Docker).
+# One-time: in the Render dashboard, "New +" -> "Blueprint" -> pick this repo. Render reads this
+# file, creates the service, and prompts for the four secret env vars below (sync: false = you
+# paste them, they are never committed). Data lives in your existing Supabase Postgres; migrations
+# run on container boot (see backend/Dockerfile CMD).
+services:
+  - type: web
+    name: chat-memory-api
+    runtime: docker
+    repo: https://github.com/poojahooda22/chat-memory
+    branch: main
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: free            # free web service: spins down after ~15 min idle, cold-starts on next hit
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true       # redeploy on every push to main
+    envVars:
+      # Supabase SESSION pooler (IPv4, session mode — NOT the 6543 transaction pooler, which breaks
+      # psycopg prepared statements + the per-transaction SET LOCAL the recall path uses). Prefix the
+      # driver: postgresql+psycopg://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:5432/postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: AI_GATEWAY_API_KEY
+        sync: false
+      # your Supabase project URL (backend verifies auth JWTs against its JWKS)
+      - key: SUPABASE_URL
+        sync: false
+      # lock CORS to the deployed frontend origin once it exists, e.g. ["https://chat-memory.vercel.app"]
+      - key: CORS_ORIGINS
+        sync: false

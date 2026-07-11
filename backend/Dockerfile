@@ -15,4 +15,7 @@ WORKDIR /app
 COPY --from=builder /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Bind to the platform-provided $PORT (Render/most PaaS inject it; default 8000 locally).
+# Apply migrations to head on boot, then exec uvicorn so it becomes PID 1 and receives SIGTERM
+# for graceful shutdown. Migrations are idempotent — a no-op once the DB is already at head.
+CMD alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
