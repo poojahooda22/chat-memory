@@ -9,12 +9,6 @@ import { streamChat, uploadImages } from "@/lib/api";
 import { useConversations } from "@/lib/conversations";
 import { cn } from "@/lib/utils";
 
-const SUGGESTIONS = [
-  "Hi! I'm Pooja, a backend developer who codes in Python.",
-  "What do you remember about me?",
-  "I love cycling on weekends.",
-];
-
 // markdown body styling — shared by rendered turns and the live streaming bubble
 const MD_BODY =
   "break-words [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:underline [&_code]:font-mono [&_code]:text-[12.5px] [&_code]:break-words [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background/60 [&_pre]:p-3 [&_pre_code]:break-normal";
@@ -151,7 +145,7 @@ export function Home() {
     </div>
   );
 
-  // ── Empty state: centered composer + suggestions (Perplexity/Lumina home) ──
+  // ── Empty state: centered composer (Perplexity/Lumina home) ──
   if (empty) {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-6 px-4">
@@ -160,17 +154,6 @@ export function Home() {
           an assistant that remembers you — and shows its receipts
         </p>
         {composer}
-        <div className="flex flex-wrap justify-center gap-2">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => send(s)}
-              className="bg-card hover:border-ring/60 rounded-full border px-3.5 py-1.5 text-xs transition-colors"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
       </div>
     );
   }
